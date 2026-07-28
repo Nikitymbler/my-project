@@ -18,7 +18,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -56,8 +58,23 @@ public final class ArenaFullCountryLifecycleTest {
 	private boolean sawEliminatedInOverlay;
 	private boolean giftedUaRescue;
 	private boolean stage5CoreWait;
+	private boolean stage5PostElimGiftDone;
+	private boolean stage7ApproachAssistDone;
 	private boolean postRescueSettle;
 	private int postRescueSettleTicks;
+	private boolean observedUaEliminated;
+	private boolean observedKzEliminated;
+	private boolean finishedPass;
+	private Country capturedWinner;
+	private ArenaMatchState capturedEndState;
+	private final java.util.LinkedHashSet<ChunkPos> forcedChunks = new java.util.LinkedHashSet<>();
+
+	private UUID ruAttackerId;
+	private String ruAttackerLossReason = "";
+	private Vec3 ruLastKnownPos = Vec3.ZERO;
+	private float ruLastKnownHp = -1.0F;
+	private Country ruLastLivingTargetCountry;
+	private Country ruLastCoreTarget;
 
 	private ArenaFullCountryLifecycleTest() {
 	}
@@ -79,19 +96,40 @@ public final class ArenaFullCountryLifecycleTest {
 		return running;
 	}
 
+	/**
+	 * Called from {@link ArenaMatchManager#onCountryEliminated} before {@code beginBreak}
+	 * clears rescue/elimination flags.
+	 */
+	public void onCountryEliminated(Country country) {
+		if (!running || finishedPass) {
+			return;
+		}
+		if (country == Country.UA) {
+			observedUaEliminated = true;
+		} else if (country == Country.KZ) {
+			observedKzEliminated = true;
+		}
+	}
+
 	public String statusReport(MinecraftServer server) {
 		ServerLevel level = resolveLevel(server);
 		ArenaMatchManager match = ArenaMatchManager.get();
 		ArenaOverlayStateService overlay = ArenaOverlayStateService.get();
 		StringBuilder builder = new StringBuilder("Lifecycle status:\n");
 		builder.append("running=").append(running).append('\n');
+		builder.append("result=").append(finishedPass ? "PASS" : (lastFailure.isEmpty() ? (running ? "RUNNING" : "IDLE") : "FAIL")).append('\n');
 		builder.append("stage=").append(stage).append('\n');
 		builder.append("elapsed_ticks=").append(elapsedTicks).append('\n');
 		builder.append("stage_ticks=").append(stageTicks).append('\n');
 		builder.append("match=").append(match.getState()).append('\n');
-		builder.append("winner=").append(match.getLastRoundWinner()).append('\n');
+		Country winnerShown = capturedWinner != null ? capturedWinner : match.getLastRoundWinner();
+		builder.append("winner=").append(winnerShown).append('\n');
 		builder.append("overlay_sequence=").append(overlay.snapshotSequence()).append('\n');
 		builder.append("last_failure=").append(lastFailure.isEmpty() ? "(none)" : lastFailure).append('\n');
+		builder.append("observedUaEliminated=").append(observedUaEliminated).append('\n');
+		builder.append("observedKzEliminated=").append(observedKzEliminated).append('\n');
+		builder.append("overlayRescueSeen=").append(sawRescueInOverlay).append('\n');
+		builder.append("overlayEliminatedSeen=").append(sawEliminatedInOverlay).append('\n');
 		for (Country country : List.of(Country.RU, Country.UA, Country.KZ)) {
 			ArenaCoreState core = ArenaCoreManager.get().getState(country);
 			builder.append(country.getCode())
@@ -111,11 +149,66 @@ public final class ArenaFullCountryLifecycleTest {
 					.append(ArenaCoreRescueManager.get().isEliminated(country))
 					.append('\n');
 		}
-		ArenaFighterEntity ru = findAlive(level, Country.RU);
-		builder.append("RU coreTarget=")
-				.append(ru == null ? "n/a" : ArenaCoreCombatManager.get().getCoreTarget(ru.getUUID()))
-				.append('\n');
+		appendRuAttackerDiagnostics(builder, server, level);
 		return builder.toString();
+	}
+
+	private void appendRuAttackerDiagnostics(StringBuilder builder, MinecraftServer server, ServerLevel level) {
+		builder.append("RU attacker uuid=").append(ruAttackerId == null ? "n/a" : ruAttackerId).append('\n');
+		ArenaFighterEntity ru = resolveRuAttacker(server, level);
+		if (ru == null) {
+			Entity raw = findEntityAnyLevel(server, ruAttackerId);
+			builder.append("RU attacker entity=missing\n");
+			builder.append("RU attacker raw=")
+					.append(raw == null ? "null" : (raw.getClass().getSimpleName() + " removed=" + raw.isRemoved()))
+					.append('\n');
+			builder.append("RU attacker alive=false\n");
+			builder.append("RU attacker lastPos=")
+					.append(String.format(java.util.Locale.ROOT, "%.1f,%.1f,%.1f", ruLastKnownPos.x, ruLastKnownPos.y, ruLastKnownPos.z))
+					.append('\n');
+			builder.append("RU attacker lastHp=").append(ruLastKnownHp).append('\n');
+			builder.append("RU attacker lastLivingTarget=").append(ruLastLivingTargetCountry).append('\n');
+			builder.append("RU attacker lastCoreTarget=").append(ruLastCoreTarget).append('\n');
+			String lossLabel = ruAttackerLossReason.isEmpty()
+					? (finishedPass ? "cleanup/end-of-match" : "unknown")
+					: ruAttackerLossReason;
+			builder.append("RU attacker loss=").append(lossLabel).append('\n');
+			ArenaCoreState uaCore = ArenaCoreManager.get().getState(Country.UA);
+			builder.append("UA coreProtected=")
+					.append(level != null && ArenaCoreManager.get().isCoreProtected(level, Country.UA))
+					.append(" HP=")
+					.append(Math.round(uaCore.getCurrentHealth()))
+					.append('/')
+					.append(Math.round(uaCore.getMaxHealth()))
+					.append('\n');
+			return;
+		}
+
+		LivingEntity livingTarget = ru.getTarget();
+		Country livingCountry = livingTarget instanceof ArenaFighterEntity enemy
+				? enemy.getArenaCountry()
+				: null;
+		Country coreTarget = ArenaCoreCombatManager.get().getCoreTarget(ru.getUUID());
+		builder.append("RU attacker entity=present\n");
+		builder.append("RU attacker alive=").append(ru.isAlive()).append(" removed=").append(ru.isRemoved()).append('\n');
+		builder.append("RU attacker pos=")
+				.append(String.format(java.util.Locale.ROOT, "%.1f,%.1f,%.1f", ru.getX(), ru.getY(), ru.getZ()))
+				.append('\n');
+		builder.append("RU attacker hp=")
+				.append(String.format(java.util.Locale.ROOT, "%.1f/%.1f", ru.getHealth(), ru.getMaxHealth()))
+				.append('\n');
+		builder.append("RU attacker livingTarget=").append(livingCountry == null ? "none" : livingCountry.getCode()).append('\n');
+		builder.append("RU attacker coreTarget=").append(coreTarget == null ? "none" : coreTarget.getCode()).append('\n');
+		builder.append("UA coreProtected=")
+				.append(ArenaCoreManager.get().isCoreProtected(level, Country.UA))
+				.append(" HP=")
+				.append(Math.round(ArenaCoreManager.get().getState(Country.UA).getCurrentHealth()))
+				.append('/')
+				.append(Math.round(ArenaCoreManager.get().getState(Country.UA).getMaxHealth()))
+				.append('\n');
+		if (!ruAttackerLossReason.isEmpty()) {
+			builder.append("RU attacker loss=").append(ruAttackerLossReason).append('\n');
+		}
 	}
 
 	public String start(MinecraftServer server, ServerLevel level, Vec3 origin, UUID playerId) {
@@ -142,6 +235,14 @@ public final class ArenaFullCountryLifecycleTest {
 		BlockPos center = BlockPos.containing(match.getMatchCenter().x, match.getMatchCenter().y, match.getMatchCenter().z);
 		placeDeterministic(fightLevel, center);
 
+		ArenaFighterEntity ru = findAlive(fightLevel, Country.RU);
+		if (ru == null) {
+			resetInternal();
+			return "FAILURE: RU attacker missing after setup";
+		}
+		ruAttackerId = ru.getUUID();
+		rememberRuState(ru);
+
 		match.startPreparedTestBattle(server);
 		match.setBattleRemainingSecondsForTest(BATTLE_SECONDS);
 		ArenaCoreManager.get().setProtectionAnnouncementsSuppressed(false);
@@ -164,6 +265,11 @@ public final class ArenaFullCountryLifecycleTest {
 			fail(server, "fight level missing");
 			return;
 		}
+		if (finishedPass) {
+			running = false;
+			return;
+		}
+		trackRuAttacker(server, level);
 
 		try {
 			switch (stage) {
@@ -222,7 +328,9 @@ public final class ArenaFullCountryLifecycleTest {
 		int uaLive = match.countLivingFightersUncached(level, Country.UA);
 		if (uaLive > 0) {
 			if (stageTicks > STAGE2_TIMEOUT) {
-				fail(server, "STAGE2 timeout: UA living still " + uaLive);
+				ArenaFighterEntity ru = resolveRuAttacker(server, level);
+				fail(server, "STAGE2 timeout: UA living still " + uaLive
+						+ "; RU=" + describeRuShort(ru));
 			}
 			return;
 		}
@@ -233,9 +341,25 @@ public final class ArenaFullCountryLifecycleTest {
 		if (ArenaCoreRescueManager.get().isEliminated(Country.UA)) {
 			errors.add("UA eliminated too early");
 		}
-		ArenaFighterEntity ru = findAlive(level, Country.RU);
-		if (ru != null && ru.getTarget() != null && !ru.getTarget().isAlive()) {
-			errors.add("RU sticky dead target");
+		ArenaFighterEntity ru = resolveRuAttacker(server, level);
+		if (ru == null) {
+			errors.add("RU attacker missing after last defender death ("
+					+ (ruAttackerLossReason.isEmpty() ? "unknown" : ruAttackerLossReason)
+					+ ")");
+		} else {
+			if (ru.getTarget() != null && !ru.getTarget().isAlive()) {
+				errors.add("RU sticky dead target");
+			}
+			if (FighterFactory.isAiFrozen(ru)) {
+				errors.add("RU attacker unexpectedly frozen");
+			}
+		}
+		ArenaFighterEntity kz = findAlive(level, Country.KZ);
+		if (kz == null) {
+			errors.add("KZ parked defender missing");
+		} else if (!FighterFactory.isAiFrozen(kz)) {
+			// Re-assert freeze so KZ cannot join the UA duel or stage-3 core race.
+			FighterFactory.freezeAi(kz);
 		}
 		ArenaRoundHudSync.pushNow(server);
 		String overlayStatus = overlayCountryStatus(Country.UA);
@@ -246,15 +370,28 @@ public final class ArenaFullCountryLifecycleTest {
 			fail(server, "STAGE2: " + String.join("; ", errors));
 			return;
 		}
-		// Prepare stage 3 diagnostics: place RU at UA approach and snapshot blocks.
+
 		BlockPos center = BlockPos.containing(match.getMatchCenter().x, match.getMatchCenter().y, match.getMatchCenter().z);
 		BlockPos approach = ArenaPositions.resolveCoreApproachPosition(level, center, Country.UA);
-		ArenaFighterEntity ruFighter = findAlive(level, Country.RU);
-		if (ruFighter != null) {
-			ruFighter.teleportTo(approach.getX() + 0.5D, approach.getY(), approach.getZ() + 0.5D);
-			ruFighter.setNoAi(false);
-			ruFighter.setTarget(null);
+		forceChunks(level, approach);
+		forceChunks(level, ArenaPositions.getCoreDamagePosition(center, Country.UA));
+
+		ru.setHealth(ru.getMaxHealth());
+		ru.teleportTo(approach.getX() + 0.5D, approach.getY(), approach.getZ() + 0.5D);
+		ru.setDeltaMovement(Vec3.ZERO);
+		ru.getNavigation().stop();
+		ru.setTarget(null);
+		ru.setPersistentAngerTarget(null);
+		ArenaCoreCombatManager.get().clearCoreTarget(ru.getUUID());
+		ru.setNoAi(false);
+		ru.setPersistenceRequired();
+		rememberRuState(ru);
+
+		if (resolveRuAttacker(server, level) == null) {
+			fail(server, "STAGE2: RU attacker vanished after approach teleport");
+			return;
 		}
+
 		int uaSlot = match.getBaseSlot(Country.UA);
 		uaBlocksBeforeAttack = snapshotBaseBlocks(level, center, uaSlot);
 		uaItemsBeforeAttack = countNearbyItems(level, ArenaCountryBaseLayout.corePosition(center, uaSlot), 18.0D);
@@ -266,9 +403,14 @@ public final class ArenaFullCountryLifecycleTest {
 	private void tickStage3(MinecraftServer server, ServerLevel level) {
 		ArenaMatchManager match = ArenaMatchManager.get();
 		ArenaCoreState uaCore = ArenaCoreManager.get().getState(Country.UA);
-		ArenaFighterEntity ru = findAlive(level, Country.RU);
+		ArenaFighterEntity ru = resolveRuAttacker(server, level);
 		if (ru == null) {
-			fail(server, "STAGE3: RU fighter missing");
+			fail(server, "STAGE3: RU fighter missing ("
+					+ (ruAttackerLossReason.isEmpty() ? "unknown" : ruAttackerLossReason)
+					+ "; uuid=" + ruAttackerId
+					+ "; lastPos="
+					+ String.format(java.util.Locale.ROOT, "%.1f,%.1f,%.1f", ruLastKnownPos.x, ruLastKnownPos.y, ruLastKnownPos.z)
+					+ ")");
 			return;
 		}
 		Country coreTarget = ArenaCoreCombatManager.get().getCoreTarget(ru.getUUID());
@@ -279,7 +421,11 @@ public final class ArenaFullCountryLifecycleTest {
 		if (!damaged && !destroyed && !rescuing) {
 			if (stageTicks > STAGE3_TIMEOUT) {
 				fail(server, "STAGE3 timeout: no core damage; coreTarget=" + coreTarget
-						+ " HP=" + uaCore.getCurrentHealth());
+						+ " livingTarget=" + describeLivingTarget(ru)
+						+ " pos="
+						+ String.format(java.util.Locale.ROOT, "%.1f,%.1f,%.1f", ru.getX(), ru.getY(), ru.getZ())
+						+ " HP=" + uaCore.getCurrentHealth()
+						+ " protected=" + ArenaCoreManager.get().isCoreProtected(level, Country.UA));
 			}
 			return;
 		}
@@ -385,7 +531,7 @@ public final class ArenaFullCountryLifecycleTest {
 		if (!ArenaCoreManager.get().isCoreProtected(level, Country.UA)) {
 			errors.add("UA not protected after new fighter");
 		}
-		ArenaFighterEntity ru = findAlive(level, Country.RU);
+		ArenaFighterEntity ru = resolveRuAttacker(server, level);
 		if (ru != null && ArenaCoreCombatManager.get().getCoreTarget(ru.getUUID()) == Country.UA) {
 			errors.add("RU still has UA core target after rescue");
 		}
@@ -411,6 +557,7 @@ public final class ArenaFullCountryLifecycleTest {
 			ru.setNoAi(false);
 		} else if (ru != null) {
 			BlockPos approach = ArenaPositions.resolveCoreApproachPosition(level, center, Country.UA);
+			forceChunks(level, approach);
 			ru.teleportTo(approach.getX() + 0.5D, approach.getY(), approach.getZ() + 0.5D);
 		}
 		stage5CoreWait = false;
@@ -431,8 +578,9 @@ public final class ArenaFullCountryLifecycleTest {
 			// Place RU at approach for second core destroy; no gift this time.
 			BlockPos center = BlockPos.containing(match.getMatchCenter().x, match.getMatchCenter().y, match.getMatchCenter().z);
 			BlockPos approach = ArenaPositions.resolveCoreApproachPosition(level, center, Country.UA);
-			ArenaFighterEntity ru = findAlive(level, Country.RU);
+			ArenaFighterEntity ru = resolveRuAttacker(server, level);
 			if (ru != null) {
+				forceChunks(level, approach);
 				ru.teleportTo(approach.getX() + 0.5D, approach.getY(), approach.getZ() + 0.5D);
 				ru.setTarget(null);
 				ru.setNoAi(false);
@@ -465,16 +613,20 @@ public final class ArenaFullCountryLifecycleTest {
 		if (match.getActiveCountries().contains(Country.UA)) {
 			errors.add("UA still active");
 		}
-		ArenaFighterEntity ru = findAlive(level, Country.RU);
+		ArenaFighterEntity ru = resolveRuAttacker(server, level);
 		if (ru != null && ArenaCoreCombatManager.get().getCoreTarget(ru.getUUID()) == Country.UA) {
 			errors.add("UA core still targeted");
 		}
-		// Gift after elim must not restore country fighters onto field.
-		int livingBeforeGift = match.countLivingFightersUncached(level, Country.UA);
-		match.handleGift(server, level, origin, Country.UA, 3);
-		int livingAfterGift = match.countLivingFightersUncached(level, Country.UA);
-		if (livingAfterGift > livingBeforeGift) {
-			errors.add("UA reinforcements after elimination");
+		// One-shot: gift after elim must not restore country fighters onto field.
+		if (!stage5PostElimGiftDone) {
+			stage5PostElimGiftDone = true;
+			observedUaEliminated = true;
+			int livingBeforeGift = match.countLivingFightersUncached(level, Country.UA);
+			match.handleGift(server, level, origin, Country.UA, 1);
+			int livingAfterGift = match.countLivingFightersUncached(level, Country.UA);
+			if (livingAfterGift > livingBeforeGift) {
+				errors.add("UA reinforcements after elimination");
+			}
 		}
 		ArenaRoundHudSync.pushNow(server);
 		String overlayStatus = overlayCountryStatus(Country.UA);
@@ -520,9 +672,9 @@ public final class ArenaFullCountryLifecycleTest {
 
 		// Start stage 7: wake KZ, weaken, place RU nearby.
 		ArenaFighterEntity kz = findAlive(level, Country.KZ);
-		ArenaFighterEntity ru = findAlive(level, Country.RU);
+		ArenaFighterEntity ru = resolveRuAttacker(server, level);
 		if (kz != null) {
-			kz.setNoAi(false);
+			FighterFactory.unfreezeAi(kz);
 			kz.setHealth(1.0F);
 		}
 		if (ru != null && kz != null) {
@@ -534,54 +686,131 @@ public final class ArenaFullCountryLifecycleTest {
 	}
 
 	private void tickStage7(MinecraftServer server, ServerLevel level) {
-		ArenaMatchManager match = ArenaMatchManager.get();
-		boolean kzEliminated = ArenaCoreRescueManager.get().isEliminated(Country.KZ);
-		boolean battleEnded = match.getState() == ArenaMatchState.BREAK
-				|| match.getState() == ArenaMatchState.IDLE
-				|| match.getLastRoundWinner() == Country.RU;
+		if (finishedPass) {
+			return;
+		}
 
-		if (!kzEliminated || !battleEnded) {
+		ArenaMatchManager match = ArenaMatchManager.get();
+		if (ArenaCoreRescueManager.get().isEliminated(Country.UA)) {
+			observedUaEliminated = true;
+		}
+		if (ArenaCoreRescueManager.get().isEliminated(Country.KZ)) {
+			observedKzEliminated = true;
+		}
+
+		Country winner = match.getLastRoundWinner();
+		ArenaMatchState matchState = match.getState();
+
+		// beginBreak() clears rescue eliminated flags in the same MatchManager tick that
+		// sets the winner. Capture via observed* flags (notifyCountryEliminated) instead.
+		boolean victoryReady = observedUaEliminated
+				&& observedKzEliminated
+				&& winner == Country.RU
+				&& (matchState == ArenaMatchState.BREAK
+						|| matchState == ArenaMatchState.IDLE
+						|| matchState == ArenaMatchState.WAITING_FOR_OPPONENT
+						|| matchState == ArenaMatchState.BATTLE);
+
+		if (victoryReady) {
+			completeStage7Pass(server, match, matchState, winner);
+			return;
+		}
+
+		if (matchState == ArenaMatchState.WAITING_FOR_OPPONENT && observedKzEliminated && winner == Country.RU) {
+			// Next round already started but we still have the required observations — PASS.
+			completeStage7Pass(server, match, matchState, winner);
+			return;
+		}
+
+		if (matchState == ArenaMatchState.WAITING_FOR_OPPONENT
+				|| (matchState == ArenaMatchState.IDLE && winner == null && stageTicks > 5)) {
+			if (observedKzEliminated || observedUaEliminated) {
+				fail(server, "STAGE7: next round started before lifecycle result was captured"
+						+ " (winner=" + winner
+						+ ", uaElim=" + observedUaEliminated
+						+ ", kzElim=" + observedKzEliminated + ")");
+			} else {
+				fail(server, "STAGE7: match ended without winner");
+			}
+			return;
+		}
+
+		if (matchState == ArenaMatchState.BATTLE && !observedKzEliminated) {
 			int kzLive = match.countLivingFightersUncached(level, Country.KZ);
-			if (kzLive == 0 && !kzEliminated) {
-				ArenaFighterEntity ru = findAlive(level, Country.RU);
+			if (kzLive == 0 && !stage7ApproachAssistDone) {
+				stage7ApproachAssistDone = true;
+				ArenaFighterEntity ru = resolveRuAttacker(server, level);
 				BlockPos center = BlockPos.containing(match.getMatchCenter().x, match.getMatchCenter().y, match.getMatchCenter().z);
 				BlockPos approach = ArenaPositions.resolveCoreApproachPosition(level, center, Country.KZ);
 				if (ru != null) {
+					forceChunks(level, approach);
 					ru.teleportTo(approach.getX() + 0.5D, approach.getY(), approach.getZ() + 0.5D);
 					ru.setTarget(null);
 					ru.setNoAi(false);
 				}
 			}
-			int timeout = STAGE7_DEFENDER_TIMEOUT + STAGE7_CORE_TIMEOUT
-					+ ArenaConfig.get().getCoreRescueSeconds() * 20 + 40;
-			if (stageTicks > timeout) {
-				fail(server, "STAGE7 timeout: kzElim=" + kzEliminated
-						+ " winner=" + match.getLastRoundWinner()
-						+ " state=" + match.getState());
-			}
-			return;
 		}
 
+		int timeout = STAGE7_DEFENDER_TIMEOUT + STAGE7_CORE_TIMEOUT
+				+ ArenaConfig.get().getCoreRescueSeconds() * 20 + 40;
+		if (stageTicks > timeout) {
+			if (winner != null && winner != Country.RU) {
+				fail(server, "STAGE7: winner was not RU (winner=" + winner + ")");
+			} else if (winner == null) {
+				fail(server, "STAGE7: match ended without winner"
+						+ " (state=" + matchState
+						+ ", uaElim=" + observedUaEliminated
+						+ ", kzElim=" + observedKzEliminated + ")");
+			} else if (!observedKzEliminated) {
+				fail(server, "STAGE7 timeout: KZ elimination not observed"
+						+ " (winner=" + winner + ", state=" + matchState + ")");
+			} else {
+				fail(server, "STAGE7 timeout: winner=" + winner
+						+ " state=" + matchState
+						+ " uaElim=" + observedUaEliminated
+						+ " kzElim=" + observedKzEliminated);
+			}
+		}
+	}
+
+	private void completeStage7Pass(
+			MinecraftServer server,
+			ArenaMatchManager match,
+			ArenaMatchState matchState,
+			Country winner) {
 		List<String> errors = new ArrayList<>();
-		if (match.getLastRoundWinner() != Country.RU) {
-			errors.add("winner=" + match.getLastRoundWinner());
+		if (winner != Country.RU) {
+			errors.add("STAGE7: winner was not RU");
+		}
+		if (!observedUaEliminated) {
+			errors.add("UA elimination not observed");
+		}
+		if (!observedKzEliminated) {
+			errors.add("KZ elimination not observed");
 		}
 		if (ArenaCoreRescueManager.get().isEliminated(Country.RU)) {
 			errors.add("RU eliminated");
 		}
+
 		ArenaRoundHudSync.pushNow(server);
 		long seq = ArenaOverlayStateService.get().snapshotSequence();
 		if (seq <= overlaySequenceAtStart) {
 			errors.add("overlay sequence not advanced");
 		}
 		String phase = overlayPhase();
-		if (!"BREAK".equals(phase) && !"IDLE".equals(phase) && !"BATTLE".equals(phase)) {
-			errors.add("overlay phase=" + phase);
+		if (!"BREAK".equals(phase)
+				&& !"IDLE".equals(phase)
+				&& !"BATTLE".equals(phase)
+				&& !"WAITING_FOR_OPPONENT".equals(phase)) {
+			errors.add("STAGE7: overlay winner state not observed (phase=" + phase + ")");
 		}
 		if (!errors.isEmpty()) {
 			fail(server, "STAGE7: " + String.join("; ", errors));
 			return;
 		}
+
+		capturedWinner = Country.RU;
+		capturedEndState = matchState;
 		stagePass.put(Stage.STAGE7_WINNER, true);
 		finishSuccess(server);
 	}
@@ -598,19 +827,25 @@ public final class ArenaFullCountryLifecycleTest {
 			ua.teleportTo(duelX + 1.5D, duelY, duelZ);
 			ua.setHealth(1.0F);
 			ua.setNoAi(false);
+			ua.setPersistenceRequired();
 		}
 		if (ru != null) {
 			ru.teleportTo(duelX - 1.5D, duelY, duelZ);
+			ru.setHealth(ru.getMaxHealth());
 			ru.setNoAi(false);
+			ru.setPersistenceRequired();
 			if (ua != null) {
 				ru.setTarget(ua);
 			}
 		}
 		if (kz != null) {
 			BlockPos kzSpawn = ArenaCountryBaseLayout.spawnZoneCenter(center, ArenaMatchManager.get().getBaseSlot(Country.KZ));
+			forceChunks(level, kzSpawn);
 			kz.teleportTo(kzSpawn.getX() + 0.5D, kzSpawn.getY() + 1.0D, kzSpawn.getZ() + 0.5D);
-			kz.setNoAi(true);
 			kz.setTarget(null);
+			kz.setHealth(kz.getMaxHealth());
+			FighterFactory.freezeAi(kz);
+			kz.setPersistenceRequired();
 		}
 	}
 
@@ -626,19 +861,48 @@ public final class ArenaFullCountryLifecycleTest {
 	}
 
 	private void fail(MinecraftServer server, String reason) {
+		if (finishedPass) {
+			return;
+		}
 		lastFailure = reason;
 		running = false;
+		cleanupTestArtifacts(server);
 		String report = formatReport(false);
 		notifyPlayer(server, report);
 		ArenaTestScenarioCommands.onLifecycleFinished();
 	}
 
 	private void finishSuccess(MinecraftServer server) {
+		if (finishedPass) {
+			return;
+		}
+		finishedPass = true;
 		running = false;
 		lastFailure = "";
+		if (capturedWinner == null) {
+			capturedWinner = Country.RU;
+		}
+		cleanupTestArtifacts(server);
 		String report = formatReport(true);
 		notifyPlayer(server, report);
 		ArenaTestScenarioCommands.onLifecycleFinished();
+	}
+
+	private void cleanupTestArtifacts(MinecraftServer server) {
+		ServerLevel level = resolveLevel(server);
+		if (level != null) {
+			for (Entity entity : level.getAllEntities()) {
+				if (entity instanceof ArenaFighterEntity fighter && FighterFactory.isAiFrozen(fighter)) {
+					FighterFactory.unfreezeAi(fighter);
+				}
+			}
+			for (ChunkPos chunk : forcedChunks) {
+				level.setChunkForced(chunk.x, chunk.z, false);
+			}
+		}
+		forcedChunks.clear();
+		ruAttackerId = null;
+		ruAttackerLossReason = "cleanup/end-of-match";
 	}
 
 	private String formatReport(boolean pass) {
@@ -708,8 +972,115 @@ public final class ArenaFullCountryLifecycleTest {
 		sawEliminatedInOverlay = false;
 		giftedUaRescue = false;
 		stage5CoreWait = false;
+		stage5PostElimGiftDone = false;
+		stage7ApproachAssistDone = false;
 		postRescueSettle = false;
 		postRescueSettleTicks = 0;
+		observedUaEliminated = false;
+		observedKzEliminated = false;
+		finishedPass = false;
+		capturedWinner = null;
+		capturedEndState = null;
+		forcedChunks.clear();
+		ruAttackerId = null;
+		ruAttackerLossReason = "";
+		ruLastKnownPos = Vec3.ZERO;
+		ruLastKnownHp = -1.0F;
+		ruLastLivingTargetCountry = null;
+		ruLastCoreTarget = null;
+	}
+
+	private void trackRuAttacker(MinecraftServer server, ServerLevel level) {
+		if (ruAttackerId == null || finishedPass || !running) {
+			return;
+		}
+		ArenaFighterEntity ru = resolveRuAttacker(server, level);
+		if (ru != null) {
+			rememberRuState(ru);
+			return;
+		}
+		if (ruAttackerLossReason.isEmpty() || "cleanup/end-of-match".equals(ruAttackerLossReason)) {
+			Entity raw = findEntityAnyLevel(server, ruAttackerId);
+			if (raw == null) {
+				ruAttackerLossReason = "entity gone from all levels (despawn/discard/unload)";
+			} else if (raw.isRemoved()) {
+				ruAttackerLossReason = "entity removed";
+			} else if (raw instanceof LivingEntity living && !living.isAlive()) {
+				ruAttackerLossReason = "entity dead hp=" + living.getHealth();
+			} else {
+				ruAttackerLossReason = "entity present but not usable arena fighter";
+			}
+			ArenaOfNations.LOGGER.warn(
+					"Lifecycle RU attacker lost at stage {} ticks={}: {}",
+					stage,
+					stageTicks,
+					ruAttackerLossReason);
+		}
+	}
+
+	private void rememberRuState(ArenaFighterEntity ru) {
+		ruLastKnownPos = ru.position();
+		ruLastKnownHp = ru.getHealth();
+		if (ru.getTarget() instanceof ArenaFighterEntity enemy) {
+			ruLastLivingTargetCountry = enemy.getArenaCountry();
+		} else {
+			ruLastLivingTargetCountry = null;
+		}
+		ruLastCoreTarget = ArenaCoreCombatManager.get().getCoreTarget(ru.getUUID());
+	}
+
+	private ArenaFighterEntity resolveRuAttacker(MinecraftServer server, ServerLevel preferredLevel) {
+		if (ruAttackerId != null) {
+			Entity byId = findEntityAnyLevel(server, ruAttackerId);
+			if (byId instanceof ArenaFighterEntity fighter
+					&& fighter.isAlive()
+					&& !fighter.isRemoved()
+					&& FighterFactory.isArenaFighter(fighter)
+					&& fighter.getArenaCountry() == Country.RU) {
+				return fighter;
+			}
+		}
+		ServerLevel level = preferredLevel != null ? preferredLevel : resolveLevel(server);
+		return findAlive(level, Country.RU);
+	}
+
+	private static Entity findEntityAnyLevel(MinecraftServer server, UUID id) {
+		if (server == null || id == null) {
+			return null;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			Entity entity = level.getEntity(id);
+			if (entity != null) {
+				return entity;
+			}
+		}
+		return null;
+	}
+
+	private void forceChunks(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		ChunkPos chunk = new ChunkPos(pos);
+		level.setChunkForced(chunk.x, chunk.z, true);
+		level.getChunk(chunk.x, chunk.z);
+		forcedChunks.add(chunk);
+	}
+
+	private static String describeRuShort(ArenaFighterEntity ru) {
+		if (ru == null) {
+			return "missing";
+		}
+		return "alive hp=" + String.format(java.util.Locale.ROOT, "%.1f", ru.getHealth())
+				+ " target=" + describeLivingTarget(ru);
+	}
+
+	private static String describeLivingTarget(ArenaFighterEntity ru) {
+		LivingEntity target = ru.getTarget();
+		if (!(target instanceof ArenaFighterEntity enemy) || !enemy.isAlive()) {
+			return "none";
+		}
+		return enemy.getArenaCountry().getCode();
 	}
 
 	private ServerLevel resolveLevel(MinecraftServer server) {

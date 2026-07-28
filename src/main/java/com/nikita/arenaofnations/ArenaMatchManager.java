@@ -48,6 +48,8 @@ public final class ArenaMatchManager {
 	private final boolean[] occupiedBaseSlots = new boolean[ArenaCountryBaseLayout.BASE_SLOT_COUNT];
 	private java.util.EnumMap<Country, Integer> cachedLivingCounts;
 	private long cachedLivingCountsTick = -1L;
+	private final EnumMap<Country, Integer> lastWaveReleased = new EnumMap<>(Country.class);
+	private int lastWaveReleasedTotal;
 
 	private ArenaMatchManager() {
 		for (Country country : Country.values()) {
@@ -55,6 +57,7 @@ public final class ArenaMatchManager {
 			giftCounts.put(country, 0);
 			spawnCounters.put(country, 0);
 			damageDealt.put(country, 0.0);
+			lastWaveReleased.put(country, 0);
 		}
 	}
 
@@ -118,6 +121,18 @@ public final class ArenaMatchManager {
 
 	public int getRemainingStateTicks() {
 		return Math.max(0, remainingTicks);
+	}
+
+	public int getBattleTicksElapsed() {
+		return Math.max(0, battleTicksElapsed);
+	}
+
+	public int getLastWaveReleasedTotal() {
+		return Math.max(0, lastWaveReleasedTotal);
+	}
+
+	public int getLastWaveReleased(Country country) {
+		return Math.max(0, lastWaveReleased.getOrDefault(country, 0));
 	}
 
 	public Set<Country> getActiveCountries() {
@@ -865,6 +880,11 @@ public final class ArenaMatchManager {
 		MinecraftServer server = level.getServer();
 		ServerLevel fightLevel = ArenaSpawns.resolveFightLevel(server, level);
 
+		lastWaveReleasedTotal = 0;
+		for (Country country : Country.values()) {
+			lastWaveReleased.put(country, 0);
+		}
+
 		for (Country country : activeCountries) {
 			if (ArenaCoreRescueManager.get().isEliminated(country)) {
 				continue;
@@ -879,6 +899,8 @@ public final class ArenaMatchManager {
 				spawnFighter(server, fightLevel, pending);
 				released++;
 			}
+			lastWaveReleased.put(country, released);
+			lastWaveReleasedTotal += released;
 		}
 	}
 

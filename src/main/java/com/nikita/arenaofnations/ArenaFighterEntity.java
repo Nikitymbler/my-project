@@ -3,14 +3,11 @@ package com.nikita.arenaofnations;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -172,22 +169,7 @@ public class ArenaFighterEntity extends Wolf {
 			return;
 		}
 		deathFeedbackPlayed = true;
-
-		double x = getX();
-		double y = getY() + getBbHeight() * 0.55;
-		double z = getZ();
-		serverLevel.sendParticles(ParticleTypes.POOF, x, y, z, 10, 0.28, 0.35, 0.28, 0.03);
-		serverLevel.sendParticles(ParticleTypes.CRIT, x, y, z, 6, 0.22, 0.30, 0.22, 0.18);
-		serverLevel.sendParticles(ParticleTypes.SMOKE, x, y, z, 4, 0.18, 0.22, 0.18, 0.01);
-		serverLevel.playSound(
-				null,
-				x,
-				y,
-				z,
-				SoundEvents.PLAYER_ATTACK_CRIT,
-				SoundSource.NEUTRAL,
-				0.55F,
-				0.85F + this.random.nextFloat() * 0.15F);
+		ArenaCombatSpectacle.onFighterDeath(serverLevel, this);
 	}
 
 	public int getEliteHeavyStrikeProgress() {

@@ -1,5 +1,7 @@
 package com.nikita.arenaofnations;
 
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -8,13 +10,21 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.phys.AABB;
 
 /**
- * Assigns living / core targets. Living-target chase belongs to {@link ArenaFighterMeleeAttackGoal}.
+ * Assigns living / core / rally targets. Living-target chase belongs to {@link ArenaFighterMeleeAttackGoal}.
+ *
+ * <p>Priority in BATTLE: (1) living enemy within {@link #SEARCH_RADIUS},
+ * (2) unprotected enemy core, (3) rally toward nearest enemy front while cores are protected,
+ * (4) idle only when no enemies remain.
  */
 final class FighterTargeting {
 	private static final int CHECK_INTERVAL_TICKS = 5;
-	/** Covers the full 36-radius field plus spawn scatter between opposite countries. */
+	/**
+	 * Local living acquisition radius. Opposite spawn zones are farther (~94–104);
+	 * armies close the gap via rally until they enter this radius.
+	 */
 	private static final double SEARCH_RADIUS = 80.0;
 	private static final double SEARCH_RADIUS_SQR = SEARCH_RADIUS * SEARCH_RADIUS;
 	/** Keep a valid living target unless it leaves this radius. */
@@ -26,6 +36,10 @@ final class FighterTargeting {
 
 	static void register() {
 		ServerTickEvents.END_WORLD_TICK.register(FighterTargeting::tickWorld);
+	}
+
+	static double getLivingSearchRadius() {
+		return SEARCH_RADIUS;
 	}
 
 	private static void tickWorld(ServerLevel level) {
@@ -48,6 +62,9 @@ final class FighterTargeting {
 
 		for (Entity entity : level.getAllEntities()) {
 			if (!(entity instanceof ArenaFighterEntity fighter) || !FighterFactory.isArenaFighter(fighter) || !fighter.isAlive()) {
+				continue;
+			}
+			if (FighterFactory.isAiFrozen(fighter)) {
 				continue;
 			}
 
@@ -99,8 +116,7 @@ final class FighterTargeting {
 				if (coreTarget != null) {
 					combat.pursueCore(level, fighter, selfCountry, coreTarget, arenaCenter);
 				} else {
-					combat.clearCoreTarget(fighter.getUUID());
-					fighter.getNavigation().stop();
+					combat.rallyTowardEnemyFront(level, fighter, selfCountry, arenaCenter, activeCountries);
 				}
 				continue;
 			}
@@ -132,6 +148,9 @@ final class FighterTargeting {
 		if (!(target instanceof ArenaFighterEntity enemy) || !FighterFactory.isArenaFighter(enemy)) {
 			return false;
 		}
+		if (FighterFactory.isAiFrozen(enemy)) {
+			return false;
+		}
 		Country targetCountry = FighterFactory.getCountry(enemy);
 		if (targetCountry == null || targetCountry == selfCountry) {
 			return false;
@@ -151,6 +170,9 @@ final class FighterTargeting {
 	}
 
 	private static void ensureCombatReady(ArenaFighterEntity fighter) {
+		if (FighterFactory.isAiFrozen(fighter)) {
+			return;
+		}
 		if (fighter.isNoAi()) {
 			fighter.setNoAi(false);
 		}
@@ -166,19 +188,24 @@ final class FighterTargeting {
 		return !isValidEnemyTarget(fighter, selfCountry, fighter.getTarget());
 	}
 
+	/**
+	 * Spatial query within {@link #SEARCH_RADIUS} — avoids scanning all fighters (O(N²)).
+	 */
 	private static ArenaFighterEntity findNearestEnemy(ServerLevel level, ArenaFighterEntity self, Country selfCountry) {
+		AABB box = self.getBoundingBox().inflate(SEARCH_RADIUS);
+		List<ArenaFighterEntity> nearby = level.getEntitiesOfClass(
+				ArenaFighterEntity.class,
+				box,
+				other -> other != self
+						&& other.isAlive()
+						&& !other.isRemoved()
+						&& FighterFactory.isArenaFighter(other)
+						&& !FighterFactory.isAiFrozen(other));
+
 		ArenaFighterEntity nearest = null;
 		double nearestDistance = Double.MAX_VALUE;
 
-		for (Entity entity : level.getAllEntities()) {
-			if (!(entity instanceof ArenaFighterEntity other) || other == self || !other.isAlive() || other.isRemoved()) {
-				continue;
-			}
-
-			if (!FighterFactory.isArenaFighter(other)) {
-				continue;
-			}
-
+		for (ArenaFighterEntity other : nearby) {
 			Country otherCountry = FighterFactory.getCountry(other);
 			if (otherCountry == null || otherCountry == selfCountry) {
 				continue;
@@ -217,22 +244,37 @@ final class FighterTargeting {
 	}
 
 	static String buildAiStatus(ServerLevel level) {
-		int total = 0;
-		int withTarget = 0;
-		int navigating = 0;
-		int sitting = 0;
-		int noAi = 0;
-		StringBuilder details = new StringBuilder();
+		MarchSnapshot snap = collectMarchSnapshot(level);
+		StringBuilder report = new StringBuilder();
+		report.append("AI статус бойцов:\n");
+		report.append("живые=").append(snap.total).append('\n');
+		report.append("living target=").append(snap.withLivingTarget).append('\n');
+		report.append("core target=").append(snap.withCoreAttackTarget).append('\n');
+		report.append("rally nav=").append(snap.withRally).append('\n');
+		report.append("navigating=").append(snap.navigating).append('\n');
+		report.append("без nav=").append(snap.withoutNavigation).append('\n');
+		report.append("сидят=").append(snap.sitting).append('\n');
+		report.append("NoAI=").append(snap.noAi).append('\n');
+		report.append("living search radius=").append(String.format(Locale.US, "%.0f", SEARCH_RADIUS)).append('\n');
+		report.append(snap.details);
+		return report.toString();
+	}
 
+	static MarchSnapshot collectMarchSnapshot(ServerLevel level) {
+		MarchSnapshot snap = new MarchSnapshot();
 		ArenaCoreCombatManager combat = ArenaCoreCombatManager.get();
 		BlockPos arenaCenter = ArenaCoreCombatManager.resolveArenaCenter(level.getServer());
+		StringBuilder details = new StringBuilder();
+
+		int detailLines = 0;
+		final int maxDetailLines = 20;
 
 		for (Entity entity : level.getAllEntities()) {
 			if (!(entity instanceof ArenaFighterEntity fighter) || !FighterFactory.isArenaFighter(fighter) || !fighter.isAlive()) {
 				continue;
 			}
 
-			total++;
+			snap.total++;
 			Country country = FighterFactory.getCountry(fighter);
 			LivingEntity livingTarget = fighter.getTarget();
 			boolean hasFighterTarget = livingTarget != null
@@ -240,20 +282,32 @@ final class FighterTargeting {
 					&& !livingTarget.isRemoved()
 					&& FighterFactory.isArenaFighter(livingTarget);
 			Country coreTarget = combat.getCoreTarget(fighter.getUUID());
+			boolean rallyOnly = combat.isRallyOnly(fighter.getUUID());
 			boolean navActive = fighter.getNavigation().isInProgress() && !fighter.getNavigation().isDone();
 
-			if (hasFighterTarget || coreTarget != null) {
-				withTarget++;
+			if (hasFighterTarget) {
+				snap.withLivingTarget++;
+			} else if (rallyOnly) {
+				snap.withRally++;
+			} else if (coreTarget != null) {
+				snap.withCoreAttackTarget++;
 			}
 			if (navActive) {
-				navigating++;
+				snap.navigating++;
+			} else {
+				snap.withoutNavigation++;
 			}
 			if (fighter.isOrderedToSit() || fighter.isInSittingPose()) {
-				sitting++;
+				snap.sitting++;
 			}
 			if (fighter.isNoAi()) {
-				noAi++;
+				snap.noAi++;
 			}
+
+			if (detailLines >= maxDetailLines) {
+				continue;
+			}
+			detailLines++;
 
 			details.append('\n')
 					.append("- ")
@@ -268,14 +322,17 @@ final class FighterTargeting {
 				distance = Math.sqrt(fighter.distanceToSqr(livingTarget));
 				details.append("боец ")
 						.append(targetCountry == null ? "?" : targetCountry.getDisplayName());
+			} else if (rallyOnly && coreTarget != null) {
+				details.append("rally→").append(coreTarget.getDisplayName());
+				if (arenaCenter != null) {
+					BlockPos corePos = ArenaPositions.getCorePosition(arenaCenter, coreTarget);
+					distance = Math.sqrt(distanceSqr(fighter, corePos));
+				}
 			} else if (coreTarget != null) {
 				details.append("ядро ").append(coreTarget.getDisplayName());
 				if (arenaCenter != null) {
 					BlockPos corePos = ArenaPositions.getCorePosition(arenaCenter, coreTarget);
-					double dx = fighter.getX() - (corePos.getX() + 0.5);
-					double dy = fighter.getY() - (corePos.getY() + 0.5);
-					double dz = fighter.getZ() - (corePos.getZ() + 0.5);
-					distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+					distance = Math.sqrt(distanceSqr(fighter, corePos));
 					inCoreRange = combat.isInCoreAttackRange(fighter, arenaCenter, coreTarget);
 				}
 			} else if (livingTarget != null && livingTarget.isAlive() && !livingTarget.isRemoved()) {
@@ -287,7 +344,7 @@ final class FighterTargeting {
 
 			if (distance >= 0.0) {
 				details.append(" (")
-						.append(String.format(java.util.Locale.US, "%.1f", distance))
+						.append(String.format(Locale.US, "%.1f", distance))
 						.append(" м)");
 			}
 
@@ -296,14 +353,30 @@ final class FighterTargeting {
 			details.append(", windup=").append(fighter.isMeleeWindupActive() ? "да" : "нет");
 		}
 
-		StringBuilder report = new StringBuilder();
-		report.append("AI статус бойцов:\n");
-		report.append("живые=").append(total).append('\n');
-		report.append("с целью=").append(withTarget).append('\n');
-		report.append("с навигацией=").append(navigating).append('\n');
-		report.append("сидят=").append(sitting).append('\n');
-		report.append("NoAI=").append(noAi);
-		report.append(details);
-		return report.toString();
+		if (snap.total > maxDetailLines) {
+			details.append('\n').append("... и ещё ").append(snap.total - maxDetailLines).append(" бойцов");
+		}
+
+		snap.details = details.toString();
+		return snap;
+	}
+
+	private static double distanceSqr(Entity entity, BlockPos pos) {
+		double dx = entity.getX() - (pos.getX() + 0.5);
+		double dy = entity.getY() - (pos.getY() + 0.5);
+		double dz = entity.getZ() - (pos.getZ() + 0.5);
+		return dx * dx + dy * dy + dz * dz;
+	}
+
+	static final class MarchSnapshot {
+		int total;
+		int withLivingTarget;
+		int withCoreAttackTarget;
+		int withRally;
+		int navigating;
+		int withoutNavigation;
+		int sitting;
+		int noAi;
+		String details = "";
 	}
 }

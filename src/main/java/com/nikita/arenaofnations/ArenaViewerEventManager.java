@@ -51,6 +51,14 @@ public final class ArenaViewerEventManager {
 	private final AtomicLong giftsWithoutEventId = new AtomicLong();
 	private final AtomicLong queueOverflows = new AtomicLong();
 
+	private volatile String lastViewer = "";
+	private volatile String lastGiftSummary = "";
+	private volatile String lastCountryCode = "";
+	private volatile int lastFighterCount;
+	private volatile String lastError = "";
+	private volatile long lastEventGameTime = -1L;
+	private volatile String lastEventKind = "";
+
 	private int ticksSinceDedupCleanup = 0;
 
 	private ArenaViewerEventManager() {
@@ -173,6 +181,34 @@ public final class ArenaViewerEventManager {
 		return queueOverflows.get();
 	}
 
+	public String getLastViewer() {
+		return lastViewer;
+	}
+
+	public String getLastGiftSummary() {
+		return lastGiftSummary;
+	}
+
+	public String getLastCountryCode() {
+		return lastCountryCode;
+	}
+
+	public int getLastFighterCount() {
+		return lastFighterCount;
+	}
+
+	public String getLastError() {
+		return lastError;
+	}
+
+	public String getLastEventKind() {
+		return lastEventKind;
+	}
+
+	public long getLastEventGameTime() {
+		return lastEventGameTime;
+	}
+
 	public int getViewerSelectionCount() {
 		return countryByViewer.size();
 	}
@@ -202,6 +238,13 @@ public final class ArenaViewerEventManager {
 		duplicateGifts.set(0);
 		giftsWithoutEventId.set(0);
 		queueOverflows.set(0);
+		lastViewer = "";
+		lastGiftSummary = "";
+		lastCountryCode = "";
+		lastFighterCount = 0;
+		lastError = "";
+		lastEventGameTime = -1L;
+		lastEventKind = "";
 		ticksSinceDedupCleanup = 0;
 	}
 
@@ -263,20 +306,27 @@ public final class ArenaViewerEventManager {
 			processed++;
 
 			if (event instanceof ViewerChatEvent chat) {
-				processChat(chat);
+				processChat(server, chat);
 			} else if (event instanceof ViewerGiftEvent gift) {
 				processGift(server, gift);
 			}
 		}
 	}
 
-	private void processChat(ViewerChatEvent event) {
+	private void processChat(MinecraftServer server, ViewerChatEvent event) {
+		long gameTime = server.overworld().getGameTime();
+		lastViewer = event.viewerId();
+		lastEventKind = "chat";
+		lastEventGameTime = gameTime;
+
 		if (!ArenaConfig.get().isViewerEventsEnabled()) {
+			lastError = "viewer_events_disabled";
 			return;
 		}
 
 		Country country = parseCountryCommand(event.message());
 		if (country == null) {
+			lastError = "unknown_or_missing_country_command";
 			return;
 		}
 
@@ -284,23 +334,38 @@ public final class ArenaViewerEventManager {
 		countryByViewer.put(viewerId, country);
 		nameByViewer.put(viewerId, event.viewerName());
 		acceptedChatEvents.incrementAndGet();
+		lastCountryCode = country.getCode();
+		lastGiftSummary = "";
+		lastFighterCount = 0;
+		lastError = "";
 	}
 
 	private void processGift(MinecraftServer server, ViewerGiftEvent event) {
 		ArenaConfig config = ArenaConfig.get();
+		long gameTime = server.overworld().getGameTime();
+		lastViewer = event.viewerId();
+		lastEventKind = "gift";
+		lastEventGameTime = gameTime;
+
 		if (!config.isViewerEventsEnabled()) {
 			rejectedGifts.incrementAndGet();
+			lastError = "viewer_events_disabled";
 			return;
 		}
 
 		if (event.coins() <= 0) {
 			rejectedGifts.incrementAndGet();
+			lastError = "coins_le_zero";
 			return;
 		}
 
 		Country country = countryByViewer.get(event.viewerId());
 		if (country == null) {
 			rejectedGifts.incrementAndGet();
+			lastError = "country_not_selected";
+			lastCountryCode = "";
+			lastGiftSummary = event.coins() + " coins (rejected)";
+			lastFighterCount = 0;
 			return;
 		}
 
@@ -309,9 +374,12 @@ public final class ArenaViewerEventManager {
 		if (!hasEventId) {
 			giftsWithoutEventId.incrementAndGet();
 		} else {
-			long gameTime = server.overworld().getGameTime();
 			if (!tryClaimGiftEventId(eventId, gameTime, config.getViewerEventDedupSeconds())) {
 				duplicateGifts.incrementAndGet();
+				lastError = "duplicate_eventId";
+				lastCountryCode = country.getCode();
+				lastGiftSummary = event.coins() + " coins eventId=" + eventId;
+				lastFighterCount = 0;
 				return;
 			}
 		}
@@ -322,6 +390,11 @@ public final class ArenaViewerEventManager {
 		Vec3 origin = resolveGiftOrigin(server, level);
 		ArenaMatchManager.get().handleGift(server, level, origin, country, event.coins());
 		acceptedGifts.incrementAndGet();
+		lastCountryCode = country.getCode();
+		lastFighterCount = event.coins();
+		lastGiftSummary = event.coins() + " coins"
+				+ (hasEventId ? (" eventId=" + eventId) : " (no eventId)");
+		lastError = "";
 	}
 
 	private static Vec3 resolveGiftOrigin(MinecraftServer server, ServerLevel level) {

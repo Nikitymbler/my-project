@@ -1,7 +1,7 @@
 ﻿# Arena of Nations — Project Status
 
 Документ состояния разработки. Источник правды — **текущий код**, не переписка.
-Дата снимка: 28 июля 2026.
+Дата снимка: 29 июля 2026.
 
 ---
 
@@ -9,7 +9,7 @@
 
 | Параметр | Значение |
 |---|---|
-| Проект | `C:\Users\pavel\Desktop\ArenaOfNations` |
+| Проект | `D:\Minecraft\ArenaOfNations` |
 | Minecraft | **1.21** |
 | Платформа | **Fabric** |
 | Fabric Loader | **0.19.3** |
@@ -30,8 +30,8 @@
 
 Зрители поддерживают страны подарками; сила превращается в бойцов и резерв; страны сражаются на арене.
 
-- Внешняя интеграция **StreamToEarn отложена** как текущий фокус разработки.
-- В коде ещё есть HTTP/S2E/viewer-команды и мост — они не удалены, но **не являются ближайшей задачей**.
+- Внешняя интеграция StreamToEarn: **этап 1 (аудит) выполнен по коду**; реальный TikTok-эфир ещё не подключался.
+- В коде есть HTTP/S2E/viewer-мост (`ArenaStreamToEarnHttpBridge`, `ArenaStreamToEarnCommands`, `ArenaViewerEventManager`).
 - Текущий фокус — создание и улучшение самой игры (бой, классы, арена, UI, зрелищность, баланс).
 
 ---
@@ -191,7 +191,11 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - Нет `LeapAtTargetGoal`, Sit/Beg/FollowOwner, волчьих target goals.
 - Goals: `FloatGoal`, `ArenaFighterMeleeAttackGoal` (**свой Goal**, прямой chase; не extends `MeleeAttackGoal`), `LookAtPlayerGoal`, `RandomLookAroundGoal`.
 - Цели: `FighterTargeting` (не targetSelector); living chase только melee goal (`moveTo(target)`).
+- **Living search radius = 80** (AABB `getEntitiesOfClass`, не полный scan всех entity). Attribute `FOLLOW_RANGE=96` на chase living не влияет.
+- **Приоритет BATTLE:** (1) живой враг ≤80; (2) уязвимое ядро → `pursueCore`; (3) иначе **rally** к mid-field точке (~центр + 12 к вражескому approach) без урона по защищённому ядру; (4) idle только если врагов нет.
+- Противоположные spawn zones (~**94–104** блоков) вне living radius → без rally армии стояли у базы при защищённых ядрах.
 - Прыжок при атаке убран.
+- **Sticky target:** `FighterTargeting` сохраняет живую цель в радиусе **14** блоков; не меняет цель во время `meleeWindupActive`; переключение только при смерти/удалении/elimination/выходе за радиус.
 - Один `mob.swing(InteractionHand.MAIN_HAND, true)` в начале атаки (melee windup и core windup); в `doHurtTarget` swing нет.
 - Анимация удара — **ванильный** swing `PlayerModel` через `attackTime` (ArmPose ITEM/EMPTY, без своей трёхфазной анимации).
 - **`ArenaFighterEntity.aiStep` вызывает `updateSwingTime()`** — у `Player` это делает `serverAiStep`/client tick; у `Wolf` вызова нет, поэтому без этого `attackAnim` оставался 0 и рука не махала (выглядело как «укус»).
@@ -199,7 +203,6 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - Задержка урона: `WINDUP_TICKS = LivingEntity.SWING_DURATION / 2` → **3 тика** после swing.
 - **Melee reach (реализовано):** `ArenaFighterMeleeRange` — start **2.35** XZ center, confirmation **2.95**, vertical max **2.0**, humanoid LoS (eye Y+1.25 → target Y+1.0 + vanilla sensing). Edge distance только для диагностики. Не опирается на vanilla `Mob.isWithinMeleeAttackRange` как единственный gate.
 - **Melee goal (реализовано):** `ArenaFighterMeleeAttackGoal` только с `Goal.Flag.LOOK` (**без** `MOVE`) — иначе GoalSelector останавливал goal при `navigation.isDone()` и windup не стартовал. Fast repath 2 тика при nav done вне range.
-- **Sticky target:** `FighterTargeting` сохраняет живую цель в радиусе **14** блоков; не меняет цель во время `meleeWindupActive`; переключение только при смерти/удалении/elimination/выходе за радиус.
 - **Windup/cooldown:** полный tier cooldown только после завершённого windup + `doHurtTarget`; range/LoS cancel → retry **4** тика; target dead → **2** тика; cooldown **не** стартует при начале swing.
 - **Navigation:** repath раз в **5** тиков или при смещении цели >1 блока; в start range — `navigation.stop()`.
 - **Диагностика:** `ArenaMeleeDiagnostics`, `ArenaFighterMeleeStats` на сущности; `/arena_melee_status` (permission 2); swarm suppression отделена от AI cancel.
@@ -214,21 +217,29 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ---
 
-## 8. Клиентские эффекты
+## 8. Клиентские эффекты и зрелищность боя
+
+Только particles/sounds — **без** изменений damage/cooldown/reach/AI.
+
+**Сервер (`ArenaCombatSpectacle`)** — live-путь одного класса «Боец»:
+- melee swing → `SWEEP_ATTACK` + `CRIT` + `PLAYER_ATTACK_SWEEP`;
+- melee hit → `DAMAGE_INDICATOR` + `CRIT` + `SWEEP_ATTACK` + `PLAYER_ATTACK_STRONG`;
+- death → `POOF`×18 + `CRIT`×14 + `SMOKE`×8 + `CLOUD`×6 + crit/extinguish sounds;
+- core hit → усиленные `CRIT`/`DAMAGE_INDICATOR`/`SMOKE` + `STONE_HIT` + тихий `ANVIL_PLACE`.
+
+Вызовы: `ArenaFighterMeleeAttackGoal`, `ArenaFighterEntity.playDeathFeedbackOnce`, `ArenaCoreCombatManager.playAttackEffects`. Loot/XP по-прежнему не дропаются.
 
 `ArenaFighterVisualEffects` (клиент, радиус ~**96**):
 
 | Tier | Эффект |
 |---|---|
-| SCOUT | `CLOUD` у ног при движении (интервал 6) |
+| SCOUT (live) | движение: `CLOUD` у ног (интервал 6); атака: `CRIT`×8 + `DAMAGE_INDICATOR` + `SWEEP_ATTACK` к цели |
 | WARRIOR | `CRIT` при атаке ×5 |
 | HEAVY | `CRIT` ×6 + `SMOKE` ×2 при атаке |
 | HERO | idle `ENCHANTED_HIT` ×2 (интервал 15); атака `CRIT` ×6 |
 | TITAN | движение `POOF` ×3 (интервал 5); атака `CRIT` ×8 |
 
 Движение: `xOld`/`zOld`. Состояние чистится при выгрузке сущности и `DISCONNECT`.
-
-Смерть бойца (сервер, один раз в `ArenaFighterEntity.die`): `POOF`×10 + `CRIT`×6 + `SMOKE`×4, звук `PLAYER_ATTACK_CRIT` (~0.55). Loot/XP не дропаются.
 
 ---
 
@@ -286,7 +297,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - Позиции (`ArenaCountryBaseLayout` / `ArenaPositions`): **slot-based** — core ring **58**, approach **52**, spawn zone **46**; pedestal ниже ядра. Старые cardinal RU/UA/KZ/BY координаты **не используются**.
 - HP ядра: `core_max_health` default **200**; DAMAGED ≤50%.
 - **Защита вышки:** `ArenaCoreManager.isCoreProtected(level, country)` — чистый запрос (без side effects); всегда считает защитников на **fight level** (`ArenaSpawns.resolveFightLevel`). Резерв без активной сущности **не** защищает. Сообщения о смене статуса — только из `updateCoreProtectionStates(server)` (один раз за server tick в `ArenaMatchManager.tickBattle`, после release резерва). `FighterTargeting` / HUD / команды статуса сообщения **не** отправляют.
-- Атака ядра (`ArenaCoreCombatManager`): range **3.5**, cooldown **20** тиков, windup **3** тика (`SWING_DURATION/2`), урон = `ATTACK_DAMAGE` бойца через `damageFromFighter`; подход — `getCoreAttackPosition`. Защищённую вышку AI не выбирает (`FighterTargeting` + `findNearestAttackableCore`); проверки защиты перед подходом, windup и фактическим уроном; удар отменяется, если защитник появился во время windup. Заблокированный урон не попадает в `coreDamageDealt`. Операторский `/arena_core_damage` обходит защиту.
+- Атака ядра (`ArenaCoreCombatManager`): range **3.5**, cooldown **20** тиков, windup **3** тика (`SWING_DURATION/2`), урон = `ATTACK_DAMAGE` бойца через `damageFromFighter`; подход — `getCoreAttackPosition`. Защищённую вышку AI **не атакует** (`findNearestAttackableCore` + проверки в windup/уроне); при отсутствии living/уязвимого ядра идёт **rally** (`rallyTowardEnemyFront`, `rallyOnly`) без урона. Заблокированный урон не попадает в `coreDamageDealt`. Операторский `/arena_core_damage` обходит защиту.
 - **Elimination / recovery (вариант C, `ArenaCoreRescueManager`):**
   - ≥1 живой боец страны на fight level → elimination/countdown **не** стартуют (даже при ядре 0%).
   - Ядро 0% + есть бойцы → countdown нет; client HUD **ЯДРО СБИТО** (не «ВЫБЫЛА»).
@@ -337,6 +348,9 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - `/arena_round_reset`
 - `/arena_config_reload` (перечитать `run/config/arena_of_nations.properties` после ручного изменения лимитов/волн)
 - `/arena_viewer_chat|gift|status|reset`
+- `/arena_s2e_chat|gift|status` — ingress-диагностика StreamToEarn (без токена в выводе)
+- `/arena_test_scenario s2e_local_gift` — локальный тест chat→gift→dedup без эфира
+- `/arena_test_scenario s2e_bridge` — мост двух зрителей RU/UA
 - `/arena_s2e_chat|gift|status` (код есть; фокус интеграции отложен)
 
 ### Спавн
@@ -346,7 +360,9 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - `/arena_demo_four`
 
 ### Тестовые сценарии
-- `/arena_test_scenario [reset|…|twenty_countries|twenty_countries_mass|countries_joining]`
+- `/arena_test_scenario [reset|…|twenty_countries|twenty_countries_mass|countries_joining|mass_duel_reserve|full_country_lifecycle|…]`
+- `/arena_test_scenario mass_duel_reserve` — gift RU/UA по 1000 через резерв, волны, march, living target, melee; авто `MASS DUEL RESERVE: PASS|FAILED`
+- `/arena_lifecycle_status` / `/arena_ai_status` — living/reserve/wave/rally/nav диагностика (без tick spam)
 - `/arena_country_layout_status` — слоты/углы/core/spawn/path участников и все 20 слотов если раунд пуст
 - `/arena_country_layout_validate` — полная проверка 20 слотов (пересечения, spawn, path, cores)
 - `/arena_country_layout_debug on|off` — частицы base/core/spawn/path (оператор)
@@ -406,14 +422,16 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ### Внешний browser overlay
 - Desktop preview: `http://127.0.0.1:8765/overlay`
-- **TikTok vertical:** `http://127.0.0.1:8765/overlay/tiktok` (canvas **1080×1920**, прозрачный фон, OBS Browser Source)
-- Query: `?scale=0.9`, `?preview=1` (рамки safe zones)
+- **TikTok vertical:** `http://127.0.0.1:8765/overlay/tiktok` (логический canvas **1080×1920**, прозрачный фон, OBS Browser Source)
+- Query: `?scale=0.9` (масштаб только внутренних элементов, canvas фиксирован), `?preview=1` (равномерный fit-scale 9:16 в окне браузера + safe-zone guides + badge)
 - JSON API: `GET /api/arena/state` (read-only, sequence-based snapshot; `Cache-Control: no-store`)
 - Thread-safety: snapshot генерируется на server tick (`ArenaOverlayStateService`) и хранится как immutable JSON в `AtomicReference`; HTTP поток читает только готовый snapshot.
 - **`ArenaOverlayStateService.pushNow(server)`** — немедленная публикация snapshot (вызывается из `ArenaRoundHudSync.pushNow`, test-сценариев, `/arena_overlay_dump`); во время BATTLE дополнительно не чаще **4 раз/с** (250 ms).
 - Snapshot строится из **`getCurrentRoundCountries()`** + active + eliminated (стабильный порядок по `baseSlot`); не зависит от client HUD mode.
 - Static assets: `overlay/{index.html,style.css,app.js}` + `overlay/tiktok/{index.html,tiktok.css,tiktok.js}` + `overlay/flags/*.svg`
-- TikTok layout: верх (бренд/фаза/таймер/число стран) + две колонки по 10 стран слева/справа; центр свободен; временные event banners 2–4 с.
+- TikTok layout: холст 1080×1920; две колонки отдельных карточек (~312×68), без сплошных боковых панелей; верхний блок brand/фаза/таймер/СТРАН; event banners по центру; OBS transparent; preview fit-scale + guides.
+- TikTok DOM: стабильные карточки по `country.id` (`cardById`); poll 250 ms обновляет только текст/HP/status/классы; флаги — **PNG 256×160** в `overlay/tiktok/flags/` через `background-image` на `.country-flag` (не SVG `<img>`); preload один раз; `?debug=1` — cardsCreated / snapshotsUpdated / flagAssetAssignments / flagFormat=PNG. HTTP отдаёт PNG как `image/png` с `Cache-Control: max-age=86400`.
+- **SVG/CEF flicker устранён:** PNG `background-image` полностью убрал мерцание флагов в TikTok LIVE Studio (подтверждено вручную через HTTPS Cloudflare Tunnel, источник 1080×1920, прозрачный browser overlay).
 - CSS vars: `--safe-top/right/bottom/left`, `--panel-width`, `--row-height`, `--overlay-scale`.
 - SVG-флаги: 20 оригинальных файлов `flag-icons` + лицензия `overlay/licenses/flag-icons-LICENSE.txt`.
 - JS: относительный `/api/arena/state`, poll **250 ms**, пустые состояния «Раунд не начат» / «Нет соединения».
@@ -433,9 +451,12 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - флаги стран над головой (PNG 128×80 из overlay SVG, world-space billboard);
 - HP-полоски под флагом;
 - крупные world-space маркеры баз (`ArenaBaseMarkerRenderer`, HD 256×160) — **подтверждено в Minecraft** (видны с большого расстояния);
-- фонари больше не выпадают при атаке ядра — **подтверждено в Minecraft**.
+- фонари больше не выпадают при атаке ядра — **подтверждено в Minecraft**;
+- **`/arena_test_scenario full_country_lifecycle` — полностью проверен в Minecraft:** `FULL COUNTRY LIFECYCLE: PASS`; стадии 1–7 PASS (PROTECTED, LAST DEFENDER, CORE ATTACK, RESCUE, ELIMINATION, ROUND CONTINUES, WINNER); `overlayRescueSeen=true`; `overlayEliminatedSeen=true`; победитель RU; UA и KZ выбыли; автозавершение PASS без тройного spam очереди UA.
+- **TikTok overlay PNG flags — подтверждено в TikTok LIVE Studio** (HTTPS Cloudflare Tunnel): мерцание SVG/CEF полностью исчезло; текст/HP/статусы/PNG-флаги стабильны; прозрачный browser source 1080×1920 работает.
+- **Полный массовый бой 1000×1000 — подтверждён вручную в Minecraft** (`/arena_round_reset` + `/arena_gift ru 1000` + `/arena_gift ua 1000`): волны резерва, выход с баз, rally → melee, приемлемая производительность, атака ядер, rescue/elimination, завершение с победителем.
 
-Сборка `gradlew.bat build` доведена до **BUILD SUCCESSFUL** (28.07, full_country_lifecycle).
+Сборка `gradlew.bat build` доведена до **BUILD SUCCESSFUL** (29.07, StreamToEarn audit stage 1).
 
 ---
 
@@ -452,7 +473,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ## 18. Текущий фокус
 
-Разработка и улучшение самой игры Arena of Nations: игровой процесс, боевая система, классы, арена, интерфейс, зрелищность и баланс. Внешняя стрим-интеграция пока отложена.
+Разработка и улучшение самой игры Arena of Nations; начат аудит/подготовка StreamToEarn (этап 1). Реальный TikTok-эфир ещё не подключался.
 
 ---
 
@@ -469,7 +490,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 7. **Melee test placement** — `ArenaTestMeleePlacement` (линии X=±4; density ±6..±10). Реализовано.
 8. **Humanoid arm swing** — `ArenaFighterEntity.aiStep()` → `updateSwingTime()` (Wolf не крутит swing; humanoid рука машет).
 9. **BossBar off** — `bossBarEnabled=false`; `/arena_hud` = client HUD; `/arena_hud bossbar` = отладка.
-10. **Death feedback** — `die`: POOF/CRIT/SMOKE + crit sound; пустой `dropAllDeathLoot`, `shouldDropExperience=false`.
+10. **Death feedback** — через `ArenaCombatSpectacle.onFighterDeath` (усилено в п.37); пустой `dropAllDeathLoot`, `shouldDropExperience=false`.
 11. **Elimination UI** — chat/actionbar «✖ … выбыла»; HUD **ВЫБЫЛА** только при `eliminated` (не при coreHP≤0).
 12. **Rescue variant C** — countdown только при 0 HP + 0 бойцов; **ЯДРО СБИТО** / **СПАСЕНИЕ Ns**; gift +50% max HP + reset; боец/heal reset; expiry → clear fighters/reserve.
 13. **HUD badges** — крупный таймер; цветные плашки ЩИТ / ЯДРО СБИТО / СПАСЕНИЕ / ВЫБЫЛА (`ArenaRoundHudRenderer`).
@@ -490,7 +511,18 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 28. **Base/core TextDisplay labels (28.07)** — `ArenaCoreDisplayManager`: один TextDisplay на слот (NBT `Entity.load` из-за private API 1.21); строки «СТРАНА [CODE] / ЯДРО hp/max / ЩИТ|УЯЗВИМА|…»; scale 2.4, viewRange 128, ~8 блоков над ядром inward. Очистка через `CORE_DISPLAY_TAG` при `/arena_setup_clear`. Layout status: visualCore, approach, displayExists. Сценарий `base_display_test`. Проверено **BUILD SUCCESSFUL**; in-game — читаемость с полёта.
 29. **TikTok overlay + HD base markers (28.07)** — вертикальный overlay `/overlay/tiktok` (1080×1920, transparent, safe CSS vars, 2 колонки ×10, event banners, `?scale=` / `?preview=1`). HD PNG `flags_hd/` 256×160 + contact sheet. Client `ArenaBaseMarkerRenderer`: флаг 5×3, название, HP, статус; дистанция 100–120; данные из расширенного `ArenaHudSnapshot` (страны всегда + arenaCenter). Legacy TextDisplay/ArmorStand labels отключены. Команды `/arena_base_markers`, сценарии `base_display_test` (8 баз), `overlay_tiktok_test`. HUD EXTERNAL показывает только таймер/счётчик/rescue. Проверено **BUILD SUCCESSFUL**; Minecraft/OBS/браузер — ручная проверка.
 30. **Base marker black-quad + core lantern drop fix (28.07)** — **Markers:** чёрный прямоугольник из‑за тёмной рамки на z=+0.02 *перед* флагом (z=0) после billboard; текст/HP не читались. Исправлено: billboard `scale(-1,-1,1)`, рамка за флагом (z=-0.02), `RenderType.entityCutoutNoCull` + FULL_BRIGHT, UV как у fighter overhead, двусторонний quad, Font отдельно (NORMAL + shadow). Status: first5 diag entries. **Cores:** каждый `damageFromFighter` вызывал `refreshVisual` → полный `clearFortressVolume`+rebuild → фонари падали. Урон/heal больше **не** меняют блоки; visual только activate/eliminate/rescue restore/reset. Фонари на постоянных stone brick + chain; `UPDATE_SUPPRESS_DROPS` в CoreBuilder/RegionClear/ArenaBuilder. Сценарии `base_marker_flags_test`, `core_structure_integrity`. Проверено **BUILD SUCCESSFUL**; in-game — markers + integrity.
-31. **full_country_lifecycle E2E (28.07)** — сценарий `/arena_test_scenario full_country_lifecycle` (RU/UA/KZ): 7 стадий — PROTECTED → last defender → real core attack → RESCUE+gift → final elimination → round continues → winner RU. Реальные механики: fighter melee, `ArenaCoreCombatManager`, rescue C, elimination, winner. Overlay `pushNow` на переходах. Команда `/arena_lifecycle_status`. Minecraft: большие флаги баз и отсутствие дропа фонарей уже подтверждены пользователем. Проверено **BUILD SUCCESSFUL**; lifecycle — ручной прогон в Minecraft.
+31. **full_country_lifecycle E2E (28.07)** — `/arena_test_scenario full_country_lifecycle` (RU/UA/KZ), 7 стадий, реальные melee/core/rescue/elimination/winner. **Подтверждено в Minecraft: `FULL COUNTRY LIFECYCLE: PASS`**, все 7 стадий PASS, `overlayRescueSeen=true`, `overlayEliminatedSeen=true`.
+32. **full_country_lifecycle STAGE3 RU missing fix (28.07)** — KZ `arena_ai_frozen` + UUID RU-атакующего; targeting не снимает freeze. Вошло в подтверждённый PASS прогон.
+33. **full_country_lifecycle STAGE7 PASS latch (28.07)** — observed elimination до `beginBreak/clearAll`; one-shot gift coins=1. **Подтверждено в Minecraft:** авто `PASS`, без тройного spam очереди UA.
+34. **TikTok preview canvas fit (28.07)** — логический холст **1080×1920**; OBS transparent; `?preview=1` равномерный fit-scale. **Подтверждено в браузере** (9:16, resize, checkerboard, guides, badge).
+35. **TikTok cards readability pass (29.07)** — отдельные полупрозрачные карточки; 2 строки; акценты статусов; крупнее header/таймер; event banners. Canvas/API/poll не менялись.
+36. **TikTok card status layout fix (29.07)** — grid `FLAG|CODE|БОЙ|РЕЗ|STATUS` с фиксированной зоной статуса ~96–105px без ellipsis; `БОЙ N` / `РЕЗ N` с пробелом; rescue badge `Nс`. Проверено сборкой; browser/OBS — ручная проверка.
+37. **Combat spectacle pass (29.07)** — `ArenaCombatSpectacle`: усиленные swing/hit/death/core particles+sounds для стрим-дистанции; клиент SCOUT получает attack VFX (`CRIT` + cue к цели). Урон/AI/cooldown не трогались. Проверено **BUILD SUCCESSFUL**; in-game — duel / `melee_contact` / удар по ядру.
+38. **Opposite-base march fix (29.07)** — **причина idle:** living search **80** < дистанция противоположных spawn (~**94–104**); оба ядра protected → `navigation.stop()`, melee goal без цели не двигается. **Фикс:** `rallyTowardEnemyFront` (mid-field ~центр+12, без урона по protected); living search через AABB; приоритет living→unprotected core→rally. Wave size/interval **10/40** без бага. Сценарий `mass_duel_reserve`. Диагностика в `/arena_ai_status`. Проверено **BUILD SUCCESSFUL**; in-game — `mass_duel_reserve` + ручной gift 1000/1000.
+39. **TikTok overlay flag flicker fix (29.07)** — стабильный DOM (`cardById`); одного DOM было недостаточно: SVG всё ещё мерцал в TikTok LIVE Studio/CEF.
+40. **TikTok overlay PNG flags (29.07)** — флаги карточек: PNG **256×160** (`overlay/tiktok/flags/`, копия `flags_hd`) через `div.country-flag` + `background-image` один раз; без filter на флаге; ВЫБЫЛА через `::after` overlay; HTTP `image/png` + cache. Stable DOM сохранён. **Подтверждено в TikTok LIVE Studio** (Cloudflare Tunnel HTTPS, 1080×1920): мерцание полностью исчезло; текст/HP/статусы/флаги стабильны.
+41. **Mass duel 1000×1000 manual PASS (29.07)** — gift RU/UA 1000: волны, rally, melee, ядра, rescue/elimination, победитель; производительность приемлемая. **Подтверждено в Minecraft.**
+42. **StreamToEarn audit stage 1 (29.07)** — карта пути S2E→HTTP→Commands→ViewerEventManager(queue)→server tick→handleGift; dedup по eventId; **без rate limit**; 1 coin = 1 Боец; выбор страны через chat `!id`. Улучшен `/arena_s2e_status`; сценарий `s2e_local_gift`; `s2e_bridge` считает living+reserve. Реальный эфир не подключался. Проверено **BUILD SUCCESSFUL**.
 
 Заменено ранее:
 

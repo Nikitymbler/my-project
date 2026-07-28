@@ -18,6 +18,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 final class ArenaMatchCommands {
@@ -132,8 +133,21 @@ final class ArenaMatchCommands {
 	}
 
 	private static int aiStatusCommand(CommandContext<CommandSourceStack> context) {
-		String report = FighterTargeting.buildAiStatus(context.getSource().getLevel());
-		context.getSource().sendSuccess(() -> Component.literal(report), false);
+		ServerLevel level = context.getSource().getLevel();
+		ArenaMatchManager match = ArenaMatchManager.get();
+		StringBuilder report = new StringBuilder(FighterTargeting.buildAiStatus(level));
+		report.append('\n').append("battleTicks=").append(match.getBattleTicksElapsed());
+		report.append('\n').append("lastWave total=").append(match.getLastWaveReleasedTotal())
+				.append(" RU=").append(match.getLastWaveReleased(Country.RU))
+				.append(" UA=").append(match.getLastWaveReleased(Country.UA));
+		report.append('\n').append("reserve RU=").append(match.getReserveSize(Country.RU))
+				.append(" UA=").append(match.getReserveSize(Country.UA));
+		report.append('\n').append("living RU=").append(match.countLivingFighters(level, Country.RU))
+				.append(" UA=").append(match.countLivingFighters(level, Country.UA));
+		if (ArenaMassDuelReserveTest.get().isRunning()) {
+			report.append('\n').append(ArenaMassDuelReserveTest.get().statusReport(context.getSource().getServer()));
+		}
+		context.getSource().sendSuccess(() -> Component.literal(report.toString()), false);
 		return 1;
 	}
 

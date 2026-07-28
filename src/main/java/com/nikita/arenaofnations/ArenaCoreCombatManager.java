@@ -8,11 +8,8 @@ import java.util.Set;
 import java.util.UUID;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -116,6 +113,20 @@ public final class ArenaCoreCombatManager {
 			Country selfCountry,
 			BlockPos arenaCenter,
 			Set<Country> activeCountries) {
+		return findNearestEnemyCore(level, fighter, selfCountry, arenaCenter, activeCountries, true);
+	}
+
+	/**
+	 * Nearest active enemy core for march/rally. When {@code requireUnprotected} is false,
+	 * protected cores are still valid destinations (movement only — no damage).
+	 */
+	public Country findNearestEnemyCore(
+			ServerLevel level,
+			ArenaFighterEntity fighter,
+			Country selfCountry,
+			BlockPos arenaCenter,
+			Set<Country> activeCountries,
+			boolean requireUnprotected) {
 		Country nearest = null;
 		double nearestDist = Double.MAX_VALUE;
 		ArenaCoreManager coreManager = ArenaCoreManager.get();
@@ -129,7 +140,7 @@ public final class ArenaCoreCombatManager {
 			if (!state.isActive() || state.isDestroyed() || ArenaCoreRescueManager.get().isEliminated(country)) {
 				continue;
 			}
-			if (coreManager.isCoreProtected(level, country)) {
+			if (requireUnprotected && coreManager.isCoreProtected(level, country)) {
 				continue;
 			}
 
@@ -144,10 +155,74 @@ public final class ArenaCoreCombatManager {
 		return nearest;
 	}
 
+	/**
+	 * March toward a mid-field rally point while enemy cores are protected.
+	 * Does not start core windup/damage — living melee takes over when armies meet.
+	 * Rally sits near arena center, biased toward the nearest enemy approach, so opposite
+	 * armies converge instead of swapping bases.
+	 */
+	public void rallyTowardEnemyFront(
+			ServerLevel level,
+			ArenaFighterEntity fighter,
+			Country selfCountry,
+			BlockPos arenaCenter,
+			Set<Country> activeCountries) {
+		Country enemyCore = findNearestEnemyCore(level, fighter, selfCountry, arenaCenter, activeCountries, false);
+		if (enemyCore == null) {
+			clearCoreTarget(fighter.getUUID());
+			fighter.getNavigation().stop();
+			return;
+		}
+
+		// Unprotected core → normal attack pursuit (priority 2).
+		if (!ArenaCoreManager.get().isCoreProtected(level, enemyCore)) {
+			pursueCore(level, fighter, selfCountry, enemyCore, arenaCenter);
+			return;
+		}
+
+		FighterCoreCombat state = fighters.computeIfAbsent(fighter.getUUID(), id -> new FighterCoreCombat());
+		boolean targetChanged = state.coreTarget != enemyCore || !state.rallyOnly;
+		state.coreTarget = enemyCore;
+		state.rallyOnly = true;
+		state.windupTicksRemaining = 0;
+		state.windupCoreTarget = null;
+		state.lastWaitReason = "rally to mid-field";
+
+		BlockPos approach = ArenaPositions.resolveCoreApproachPosition(level, arenaCenter, enemyCore);
+		BlockPos rallyPos = midFieldRallyPoint(arenaCenter, approach, fighter.getBlockY());
+		ensureNavigatingToCore(level, fighter, rallyPos, rallyPos, state, targetChanged);
+	}
+
+	/** ~12 blocks from center toward the enemy approach — armies meet in the middle. */
+	private static BlockPos midFieldRallyPoint(BlockPos arenaCenter, BlockPos enemyApproach, int y) {
+		double cx = arenaCenter.getX() + 0.5;
+		double cz = arenaCenter.getZ() + 0.5;
+		double ax = enemyApproach.getX() + 0.5;
+		double az = enemyApproach.getZ() + 0.5;
+		double dx = ax - cx;
+		double dz = az - cz;
+		double len = Math.sqrt(dx * dx + dz * dz);
+		double bias = 12.0;
+		if (len > 1.0E-3) {
+			dx = dx / len * bias;
+			dz = dz / len * bias;
+		} else {
+			dx = 0.0;
+			dz = 0.0;
+		}
+		return BlockPos.containing(cx + dx, y, cz + dz);
+	}
+
+	public boolean isRallyOnly(UUID fighterId) {
+		FighterCoreCombat state = fighters.get(fighterId);
+		return state != null && state.rallyOnly && state.coreTarget != null;
+	}
+
 	public void clearCoreTarget(UUID fighterId) {
 		FighterCoreCombat state = fighters.get(fighterId);
 		if (state != null) {
 			state.coreTarget = null;
+			state.rallyOnly = false;
 			state.lastMoveTarget = null;
 			state.windupTicksRemaining = 0;
 			state.windupCoreTarget = null;
@@ -164,6 +239,7 @@ public final class ArenaCoreCombatManager {
 			FighterCoreCombat state = entry.getValue();
 			if (state.coreTarget == coreCountry || state.windupCoreTarget == coreCountry) {
 				state.coreTarget = null;
+				state.rallyOnly = false;
 				state.lastMoveTarget = null;
 				state.windupTicksRemaining = 0;
 				state.windupCoreTarget = null;
@@ -222,8 +298,9 @@ public final class ArenaCoreCombatManager {
 		}
 
 		FighterCoreCombat state = fighters.computeIfAbsent(fighter.getUUID(), id -> new FighterCoreCombat());
-		boolean targetChanged = state.coreTarget != coreCountry;
+		boolean targetChanged = state.coreTarget != coreCountry || state.rallyOnly;
 		state.coreTarget = coreCountry;
+		state.rallyOnly = false;
 		state.lastWaitReason = null;
 
 		BlockPos corePos = ArenaPositions.getCoreDamagePosition(arenaCenter, coreCountry);
@@ -254,6 +331,11 @@ public final class ArenaCoreCombatManager {
 
 		for (Map.Entry<UUID, FighterCoreCombat> entry : fighters.entrySet()) {
 			FighterCoreCombat state = entry.getValue();
+			if (state.rallyOnly) {
+				state.windupTicksRemaining = 0;
+				state.windupCoreTarget = null;
+				continue;
+			}
 			if (state.windupTicksRemaining <= 0) {
 				continue;
 			}
@@ -807,12 +889,7 @@ public final class ArenaCoreCombatManager {
 	}
 
 	private static void playAttackEffects(ServerLevel level, BlockPos corePos) {
-		double x = corePos.getX() + 0.5;
-		double y = corePos.getY() + 0.6;
-		double z = corePos.getZ() + 0.5;
-
-		level.playSound(null, corePos, SoundEvents.STONE_HIT, SoundSource.BLOCKS, 0.55F, 0.95F + level.random.nextFloat() * 0.1F);
-		level.sendParticles(ParticleTypes.CRIT, x, y, z, 5, 0.25, 0.35, 0.25, 0.08);
+		ArenaCombatSpectacle.onCoreHit(level, corePos);
 	}
 
 	private static void stopCoreNavigation(ArenaFighterEntity fighter) {
@@ -839,6 +916,8 @@ public final class ArenaCoreCombatManager {
 
 	private static final class FighterCoreCombat {
 		private Country coreTarget;
+		/** True while marching to a (possibly protected) enemy front — no core damage. */
+		private boolean rallyOnly;
 		private Country windupCoreTarget;
 		private int windupTicksRemaining;
 		private long nextAttackGameTime;

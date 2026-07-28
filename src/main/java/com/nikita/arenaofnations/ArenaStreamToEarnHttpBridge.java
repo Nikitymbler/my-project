@@ -44,6 +44,7 @@ public final class ArenaStreamToEarnHttpBridge {
 	private static HttpServer httpServer;
 	private static ExecutorService executor;
 	private static volatile boolean running;
+	private static volatile boolean s2eEndpointsActive;
 	private static volatile String runningBindAddress = SAFE_BIND_HOST;
 	private static volatile int runningPort = 8765;
 
@@ -60,6 +61,11 @@ public final class ArenaStreamToEarnHttpBridge {
 
 	public static boolean isRunning() {
 		return running;
+	}
+
+	/** True when gift/chat HTTP endpoints are registered (requires s2e_http_enabled + token). */
+	public static boolean areS2eEndpointsActive() {
+		return s2eEndpointsActive;
 	}
 
 	public static int getConfiguredPort() {
@@ -138,6 +144,7 @@ public final class ArenaStreamToEarnHttpBridge {
 				httpServer = server;
 				executor = httpExecutor;
 				running = true;
+				s2eEndpointsActive = s2eEnabled;
 				runningBindAddress = bindHost;
 				runningPort = port;
 
@@ -149,6 +156,7 @@ public final class ArenaStreamToEarnHttpBridge {
 						s2eEnabled);
 			} catch (Exception e) {
 				running = false;
+				s2eEndpointsActive = false;
 				httpServer = null;
 				shutdownExecutorQuietly();
 				ArenaOfNations.LOGGER.error(
@@ -171,6 +179,7 @@ public final class ArenaStreamToEarnHttpBridge {
 				httpServer = null;
 			}
 			shutdownExecutorQuietly();
+			s2eEndpointsActive = false;
 			if (running) {
 				running = false;
 				ArenaOfNations.LOGGER.info("StreamToEarn HTTP bridge stopped.");
@@ -571,7 +580,13 @@ public final class ArenaStreamToEarnHttpBridge {
 			byte[] bytes = in.readAllBytes();
 			Headers headers = exchange.getResponseHeaders();
 			headers.set("Content-Type", contentType);
-			headers.set("Cache-Control", "no-store");
+			String lower = resourcePath.toLowerCase(Locale.ROOT);
+			if (lower.endsWith(".png") || lower.endsWith(".svg") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp")) {
+				// Stable flag/image assets — allow CEF to keep decoded bitmaps across overlay polls.
+				headers.set("Cache-Control", "public, max-age=86400");
+			} else {
+				headers.set("Cache-Control", "no-store");
+			}
 			exchange.sendResponseHeaders(200, bytes.length);
 			try (OutputStream out = exchange.getResponseBody()) {
 				out.write(bytes);
@@ -589,6 +604,15 @@ public final class ArenaStreamToEarnHttpBridge {
 		}
 		if (lower.endsWith(".svg")) {
 			return "image/svg+xml";
+		}
+		if (lower.endsWith(".png")) {
+			return "image/png";
+		}
+		if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+			return "image/jpeg";
+		}
+		if (lower.endsWith(".webp")) {
+			return "image/webp";
 		}
 		if (lower.endsWith(".html")) {
 			return "text/html; charset=utf-8";

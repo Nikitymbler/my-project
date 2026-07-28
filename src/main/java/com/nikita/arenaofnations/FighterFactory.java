@@ -15,8 +15,13 @@ public final class FighterFactory {
 	public static final String FIGHTER_TAG = "arena_fighter";
 	/** Marks that arena combat AI defaults were applied once at spawn. */
 	public static final String AI_READY_TAG = "arena_ai_ready";
+	/**
+	 * Test/lifecycle pause: living fighter still protects the core, but targeting must not
+	 * clear noAi or assign chase/core goals. Used so a parked ally cannot join a duel.
+	 */
+	public static final String AI_FROZEN_TAG = "arena_ai_frozen";
 
-	/** Must cover the large arena field (search radius 80). */
+	/** Must cover local melee chase; long-range march uses rally, not this attribute. */
 	private static final double FOLLOW_RANGE = 96.0;
 
 	private FighterFactory() {
@@ -33,11 +38,37 @@ public final class FighterFactory {
 		fighter.setBaby(false);
 		fighter.setCustomName(Component.literal(country.getDisplayName() + " — Боец").withStyle(country.getColor()));
 		fighter.setCustomNameVisible(true);
+		fighter.setPersistenceRequired();
 		applyStats(fighter, singleTier);
 		prepareCombatAi(fighter);
 		assignTeam(level, fighter, country);
 
 		return fighter;
+	}
+
+	public static boolean isAiFrozen(Entity entity) {
+		return entity != null && entity.getTags().contains(AI_FROZEN_TAG);
+	}
+
+	/** Park a living fighter: keeps core protection, blocks combat AI/targeting. */
+	public static void freezeAi(ArenaFighterEntity fighter) {
+		if (fighter == null) {
+			return;
+		}
+		fighter.addTag(AI_FROZEN_TAG);
+		fighter.setNoAi(true);
+		fighter.setTarget(null);
+		fighter.setPersistentAngerTarget(null);
+		fighter.getNavigation().stop();
+		fighter.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+	}
+
+	public static void unfreezeAi(ArenaFighterEntity fighter) {
+		if (fighter == null) {
+			return;
+		}
+		fighter.removeTag(AI_FROZEN_TAG);
+		prepareCombatAi(fighter);
 	}
 
 	public static Country getCountry(Entity entity) {

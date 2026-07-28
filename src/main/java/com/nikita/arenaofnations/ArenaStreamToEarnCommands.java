@@ -10,6 +10,7 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 
 /**
  * Command bridge for StreamToEarn. Parses server console payloads and forwards
@@ -55,8 +56,9 @@ public final class ArenaStreamToEarnCommands {
 			dispatcher.register(Commands.literal("arena_s2e_status")
 					.requires(source -> source.hasPermission(2))
 					.executes(context -> {
+						MinecraftServer server = context.getSource().getServer();
 						context.getSource().sendSuccess(
-								() -> Component.literal(buildStatusText()), false);
+								() -> Component.literal(buildStatusText(server)), false);
 						return 1;
 					}));
 		});
@@ -81,24 +83,61 @@ public final class ArenaStreamToEarnCommands {
 	}
 
 	public static String buildStatusText() {
+		return buildStatusText(null);
+	}
+
+	public static String buildStatusText(MinecraftServer server) {
+		ArenaConfig config = ArenaConfig.get();
 		ArenaViewerEventManager viewers = ArenaViewerEventManager.get();
 		StringBuilder builder = new StringBuilder();
 		builder.append("StreamToEarn bridge:\n");
-		builder.append("viewer_events_enabled=").append(ArenaConfig.get().isViewerEventsEnabled()).append('\n');
-		builder.append("принятые chat-команды=").append(acceptedChatCommands.get()).append('\n');
-		builder.append("принятые gift-команды=").append(acceptedGiftCommands.get()).append('\n');
-		builder.append("отклонённые команды=").append(rejectedCommands.get()).append('\n');
-		builder.append("очередь viewer events=").append(viewers.getQueueSize()).append('\n');
-		builder.append("события без eventId=").append(viewers.getGiftsWithoutEventId()).append('\n');
-		builder.append("последний результат=").append(lastResult.get()).append('\n');
-		String reason = lastRejectReason.get();
-		builder.append("причина отклонения=")
-				.append(reason == null || reason.isEmpty() ? "нет" : reason)
-				.append('\n');
+		builder.append("bridge_enabled(config s2e_http_enabled)=").append(config.isS2eHttpEnabled()).append('\n');
+		builder.append("viewer_events_enabled=").append(config.isViewerEventsEnabled()).append('\n');
 		builder.append("HTTP running=").append(ArenaStreamToEarnHttpBridge.isRunning()).append('\n');
-		builder.append("HTTP port=").append(ArenaStreamToEarnHttpBridge.getConfiguredPort()).append('\n');
-		builder.append("HTTP token configured=").append(ArenaStreamToEarnHttpBridge.isTokenConfigured());
+		builder.append("S2E endpoints active=").append(ArenaStreamToEarnHttpBridge.areS2eEndpointsActive()).append('\n');
+		builder.append("bind=").append(ArenaStreamToEarnHttpBridge.getBindAddress()).append('\n');
+		builder.append("port(effective)=").append(ArenaStreamToEarnHttpBridge.getRunningPort()).append('\n');
+		builder.append("port(config s2e_http_port)=").append(ArenaStreamToEarnHttpBridge.getConfiguredPort()).append('\n');
+		builder.append("token configured=").append(ArenaStreamToEarnHttpBridge.isTokenConfigured()).append('\n');
+		builder.append("endpoints:\n");
+		builder.append("  GET  /arena/health\n");
+		builder.append("  POST /arena/chat  (header X-Arena-Token)\n");
+		builder.append("  POST /arena/gift  (header X-Arena-Token)\n");
+		builder.append("  POST /arena/streamtoearn/chat  (body-auth JSON/plain)\n");
+		builder.append("  POST /arena/streamtoearn/gift  (body-auth JSON/plain)\n");
+		builder.append("received chat (ingress)=").append(acceptedChatCommands.get()).append('\n');
+		builder.append("received gift (ingress)=").append(acceptedGiftCommands.get()).append('\n');
+		builder.append("rejected (ingress)=").append(rejectedCommands.get()).append('\n');
+		builder.append("accepted chat (processed)=").append(viewers.getAcceptedChatEvents()).append('\n');
+		builder.append("accepted gifts (processed)=").append(viewers.getAcceptedGifts()).append('\n');
+		builder.append("rejected gifts (processed)=").append(viewers.getRejectedGifts()).append('\n');
+		builder.append("duplicate gifts=").append(viewers.getDuplicateGifts()).append('\n');
+		builder.append("queued events=").append(viewers.getQueueSize()).append('\n');
+		builder.append("gifts without eventId=").append(viewers.getGiftsWithoutEventId()).append('\n');
+		builder.append("queue overflows=").append(viewers.getQueueOverflows()).append('\n');
+		builder.append("last event kind=").append(emptyAsNone(viewers.getLastEventKind())).append('\n');
+		builder.append("last event age ticks=");
+		long lastGameTime = viewers.getLastEventGameTime();
+		if (server != null && lastGameTime >= 0L) {
+			builder.append(Math.max(0L, server.overworld().getGameTime() - lastGameTime));
+		} else {
+			builder.append(lastGameTime < 0L ? "n/a" : String.valueOf(lastGameTime));
+		}
+		builder.append('\n');
+		builder.append("last viewer=").append(emptyAsNone(viewers.getLastViewer())).append('\n');
+		builder.append("last gift=").append(emptyAsNone(viewers.getLastGiftSummary())).append('\n');
+		builder.append("last country=").append(emptyAsNone(viewers.getLastCountryCode())).append('\n');
+		builder.append("last fighter count=").append(viewers.getLastFighterCount()).append('\n');
+		builder.append("last error=").append(emptyAsNone(viewers.getLastError())).append('\n');
+		builder.append("ingress last result=").append(lastResult.get()).append('\n');
+		String reason = lastRejectReason.get();
+		builder.append("ingress reject reason=")
+				.append(reason == null || reason.isEmpty() ? "нет" : reason);
 		return builder.toString();
+	}
+
+	private static String emptyAsNone(String value) {
+		return value == null || value.isEmpty() ? "нет" : value;
 	}
 
 	public static void clearBridgeCounters() {

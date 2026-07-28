@@ -7,27 +7,32 @@
   <link rel="stylesheet" href="/overlay/tiktok/tiktok.css">
 </head>
 <body>
-  <div id="stage">
-    <div id="safe-frame" class="preview-only"></div>
-    <div id="center-zone" class="preview-only"></div>
-    <div id="left-guide" class="preview-only"></div>
-    <div id="right-guide" class="preview-only"></div>
-    <div id="bottom-guide" class="preview-only"></div>
+  <div id="fit-root">
+    <div id="stage">
+      <div id="stage-inner">
+        <header id="header">
+          <div id="brand">ARENA OF NATIONS</div>
+          <div id="phase">ОЖИДАНИЕ</div>
+          <div id="timer">00:00</div>
+          <div id="remaining">СТРАН: 0</div>
+          <div id="status-note" class="hidden">Нет соединения</div>
+        </header>
 
-    <header id="header">
-      <div id="brand">ARENA OF NATIONS</div>
-      <div id="phase">ОЖИДАНИЕ</div>
-      <div id="timer">00:00</div>
-      <div id="remaining">Стран: 0</div>
-      <div id="status-note" class="hidden">Нет соединения</div>
-    </header>
+        <div id="columns">
+          <div id="left-panel" class="panel"></div>
+          <div id="right-panel" class="panel"></div>
+        </div>
 
-    <div id="columns">
-      <div id="left-panel" class="panel"></div>
-      <div id="right-panel" class="panel"></div>
+        <div id="event-banner" class="hidden"></div>
+      </div>
+
+      <div id="safe-frame" class="preview-only"></div>
+      <div id="center-zone" class="preview-only"></div>
+      <div id="left-guide" class="preview-only"></div>
+      <div id="right-guide" class="preview-only"></div>
+      <div id="bottom-guide" class="preview-only"></div>
+      <div id="preview-badge" class="preview-only">1080 × 1920 · 9:16 PREVIEW</div>
     </div>
-
-    <div id="event-banner" class="hidden"></div>
   </div>
   <script src="/overlay/tiktok/tiktok.js"></script>
 </body>

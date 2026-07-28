@@ -147,6 +147,10 @@ public final class ArenaFighterVisualEffects {
 				if (movingOnGround && due(fighter.tickCount, scheduleOffset, SCOUT_MOVE_INTERVAL)) {
 					spawnFootParticles(level, fighter, random, ParticleTypes.CLOUD, 2);
 				}
+				if (attackStarted) {
+					spawnCritBurst(level, fighter, random, 8);
+					spawnDamageCueTowardTarget(level, fighter, random);
+				}
 			}
 			case WARRIOR -> {
 				if (attackStarted) {
@@ -268,6 +272,37 @@ public final class ArenaFighterVisualEffects {
 					0.08 + random.nextDouble() * 0.18,
 					(random.nextDouble() - 0.5) * 0.25);
 		}
+	}
+
+	/** Stream-readable cue between attacker and current target on swing start. */
+	private static void spawnDamageCueTowardTarget(
+			ClientLevel level,
+			ArenaFighterEntity fighter,
+			RandomSource random) {
+		LivingEntity target = fighter.getTarget();
+		double x;
+		double y;
+		double z;
+		if (target != null && target.isAlive()) {
+			x = Mth.lerp(0.55, fighter.getX(), target.getX());
+			y = Mth.lerp(0.55, fighter.getY() + fighter.getBbHeight() * 0.65, target.getY() + target.getBbHeight() * 0.65);
+			z = Mth.lerp(0.55, fighter.getZ(), target.getZ());
+		} else {
+			x = fighter.getX();
+			y = fighter.getY() + fighter.getBbHeight() * 0.7;
+			z = fighter.getZ();
+		}
+		for (int i = 0; i < 5; i++) {
+			level.addParticle(
+					ParticleTypes.DAMAGE_INDICATOR,
+					x + (random.nextDouble() - 0.5) * 0.35,
+					y + (random.nextDouble() - 0.5) * 0.25,
+					z + (random.nextDouble() - 0.5) * 0.35,
+					(random.nextDouble() - 0.5) * 0.08,
+					0.05 + random.nextDouble() * 0.08,
+					(random.nextDouble() - 0.5) * 0.08);
+		}
+		level.addParticle(ParticleTypes.SWEEP_ATTACK, x, y, z, 0.0, 0.0, 0.0);
 	}
 
 	private static void spawnSmoke(ClientLevel level, ArenaFighterEntity fighter, RandomSource random, int count) {

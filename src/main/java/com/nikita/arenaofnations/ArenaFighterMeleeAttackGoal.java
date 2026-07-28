@@ -7,6 +7,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -217,6 +218,9 @@ public class ArenaFighterMeleeAttackGoal extends Goal {
 		boolean struck = this.mob.doHurtTarget(target);
 		stats.recordDoHurtTargetCall(struck);
 		ArenaMeleeDiagnostics.onDoHurtTarget(gameTime, struck);
+		if (struck && this.mob.level() instanceof ServerLevel serverLevel) {
+			ArenaCombatSpectacle.onMeleeHit(serverLevel, this.mob, target);
+		}
 
 		if (LOGGED_FIRST_ATTACK.compareAndSet(false, true)) {
 			long delay = windupStartGameTime >= 0L ? gameTime - windupStartGameTime : -1L;
@@ -250,6 +254,9 @@ public class ArenaFighterMeleeAttackGoal extends Goal {
 		this.mob.getNavigation().stop();
 		suppressUpwardLunge();
 		this.mob.swing(InteractionHand.MAIN_HAND, true);
+		if (this.mob.level() instanceof ServerLevel serverLevel) {
+			ArenaCombatSpectacle.onMeleeSwing(serverLevel, this.mob);
+		}
 
 		ArenaFighterMeleeStats stats = this.mob.getMeleeStats();
 		stats.recordSwing(gameTime);

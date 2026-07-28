@@ -16,10 +16,19 @@ final class ArenaLifecycleCommands {
 			dispatcher.register(Commands.literal("arena_lifecycle_status")
 					.requires(source -> source.hasPermission(2))
 					.executes(context -> {
-						context.getSource().sendSuccess(
-								() -> Component.literal(
-										ArenaFullCountryLifecycleTest.get().statusReport(context.getSource().getServer())),
-								false);
+						var server = context.getSource().getServer();
+						String report;
+						if (ArenaMassDuelReserveTest.get().isRunning()) {
+							report = ArenaMassDuelReserveTest.get().statusReport(server);
+						} else {
+							report = ArenaFullCountryLifecycleTest.get().statusReport(server);
+							String mass = ArenaMassDuelReserveTest.get().statusReport(server);
+							if (mass.contains("result=PASS") || mass.contains("result=FAIL")) {
+								report = mass + "\n---\n" + report;
+							}
+						}
+						String finalReport = report;
+						context.getSource().sendSuccess(() -> Component.literal(finalReport), false);
 						return Command.SINGLE_SUCCESS;
 					}));
 		});

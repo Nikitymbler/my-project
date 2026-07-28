@@ -50,6 +50,7 @@ final class ArenaTestScenarioCommands {
 			"viewer_flow",
 			"viewer_duplicate",
 			"s2e_bridge",
+			"s2e_local_gift",
 			"twenty_countries",
 			"twenty_countries_mass",
 			"countries_joining",
@@ -62,6 +63,7 @@ final class ArenaTestScenarioCommands {
 			"overlay_tiktok_test",
 			"core_structure_integrity",
 			"full_country_lifecycle",
+			"mass_duel_reserve",
 			"fighter_flags_test");
 
 	private static DeferredScenario deferred;
@@ -81,6 +83,14 @@ final class ArenaTestScenarioCommands {
 			ArenaFullCountryLifecycleTest.get().cancel();
 			hadDeferred = true;
 		}
+		if (ArenaMassDuelReserveTest.get().isRunning()) {
+			ArenaMassDuelReserveTest.get().cancel();
+			hadDeferred = true;
+		}
+		if (ArenaS2eLocalGiftTest.get().isRunning()) {
+			ArenaS2eLocalGiftTest.get().cancel();
+			hadDeferred = true;
+		}
 		if (hadDeferred) {
 			RUNNING.set(false);
 		}
@@ -95,6 +105,8 @@ final class ArenaTestScenarioCommands {
 	 * Snapshot elimination before BREAK clears rescue state.
 	 */
 	static void notifyCountryEliminated(Country country) {
+		ArenaFullCountryLifecycleTest.get().onCountryEliminated(country);
+
 		DeferredScenario scenario = deferred;
 		if (scenario == null || scenario.phase != DeferredPhase.ELIMINATION_WAIT) {
 			return;
@@ -184,9 +196,21 @@ final class ArenaTestScenarioCommands {
 				return Command.SINGLE_SUCCESS;
 			}
 
+			if ("s2e_local_gift".equals(raw)) {
+				String started = ArenaS2eLocalGiftTest.get().start(server, level, player.getUUID());
+				source.sendSuccess(() -> Component.literal("Сценарий: s2e_local_gift\n" + started), false);
+				return Command.SINGLE_SUCCESS;
+			}
+
 			if ("full_country_lifecycle".equals(raw)) {
 				String started = ArenaFullCountryLifecycleTest.get().start(server, level, origin, player.getUUID());
 				source.sendSuccess(() -> Component.literal("Сценарий: full_country_lifecycle\n" + started), false);
+				return Command.SINGLE_SUCCESS;
+			}
+
+			if ("mass_duel_reserve".equals(raw)) {
+				String started = ArenaMassDuelReserveTest.get().start(server, level, origin, player.getUUID());
+				source.sendSuccess(() -> Component.literal("Сценарий: mass_duel_reserve\n" + started), false);
 				return Command.SINGLE_SUCCESS;
 			}
 
@@ -1288,6 +1312,14 @@ final class ArenaTestScenarioCommands {
 			ArenaFullCountryLifecycleTest.get().tick(server);
 			return;
 		}
+		if (ArenaMassDuelReserveTest.get().isRunning()) {
+			ArenaMassDuelReserveTest.get().tick(server);
+			return;
+		}
+		if (ArenaS2eLocalGiftTest.get().isRunning()) {
+			ArenaS2eLocalGiftTest.get().tick(server);
+			return;
+		}
 
 		DeferredScenario scenario = deferred;
 		if (scenario == null) {
@@ -1374,10 +1406,6 @@ final class ArenaTestScenarioCommands {
 	private static String evaluateS2eBridge(MinecraftServer server, ServerLevel level) {
 		ArenaViewerEventManager viewers = ArenaViewerEventManager.get();
 		ArenaMatchManager match = ArenaMatchManager.get();
-		ArenaConfig config = ArenaConfig.get();
-
-		FighterTier expectedRu = config.tierFromCoins(1);
-		FighterTier expectedUa = config.tierFromCoins(50);
 
 		StringBuilder failure = new StringBuilder();
 		if (viewers.getSelectedCountry("viewer_s2e") != Country.RU) {
@@ -1395,11 +1423,13 @@ final class ArenaTestScenarioCommands {
 		if (match.getState() != ArenaMatchState.BATTLE) {
 			failure.append(" матч не в BATTLE (").append(match.getState()).append(");");
 		}
-		if (countFighters(level, Country.RU, expectedRu) < 1) {
-			failure.append(" нет бойца RU ").append(expectedRu.getDisplayName()).append(';');
+		int ruTotal = match.countLivingFightersUncached(level, Country.RU) + match.getReserveSize(Country.RU);
+		int uaTotal = match.countLivingFightersUncached(level, Country.UA) + match.getReserveSize(Country.UA);
+		if (ruTotal < 1) {
+			failure.append(" нет бойцов RU (living+reserve);");
 		}
-		if (countFighters(level, Country.UA, expectedUa) < 1) {
-			failure.append(" нет бойца UA ").append(expectedUa.getDisplayName()).append(';');
+		if (uaTotal < 1) {
+			failure.append(" нет бойцов UA (living+reserve);");
 		}
 
 		if (failure.isEmpty()) {
