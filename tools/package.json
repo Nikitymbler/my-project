@@ -1,0 +1,9 @@
+{
+  "name": "arena-flag-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "sharp": "^0.33.5"
+  }
+}

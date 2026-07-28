@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "arena_of_nations",
+	"version": "${version}",
+	"name": "Arena of Nations",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/arena_of_nations/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.nikita.arenaofnations.ArenaOfNations"
+		],
+		"client": [
+			"com.nikita.arenaofnations.client.ArenaOfNationsClient"
+		]
+	},
+	"mixins": [
+		"arena_of_nations.mixins.json",
+		{
+			"config": "arena_of_nations.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~1.21",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

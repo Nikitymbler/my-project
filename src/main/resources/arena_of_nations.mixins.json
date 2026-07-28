@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "com.nikita.arenaofnations.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"mixins": [
+		"ExampleMixin",
+		"LivingEntityHurtMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}
