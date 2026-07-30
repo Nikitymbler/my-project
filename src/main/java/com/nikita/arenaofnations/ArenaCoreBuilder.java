@@ -81,7 +81,7 @@ public final class ArenaCoreBuilder {
 
 		Block floor = Blocks.SMOOTH_STONE;
 		Block trim = visual == ArenaCoreState.CoreVisual.INACTIVE
-				? Blocks.STONE_BRICK_SLAB
+				? Blocks.STONE_BRICKS
 				: CountryVisualPalette.primaryBlock(country);
 
 		for (int forward = 0; forward < depth; forward++) {
@@ -96,6 +96,38 @@ public final class ArenaCoreBuilder {
 				BlockPos feet = floorPos.above();
 				set(level, feet, Blocks.AIR.defaultBlockState());
 				set(level, feet.above(), Blocks.AIR.defaultBlockState());
+			}
+		}
+		// Keep base exits flat and wide: no slab lip / trench around the spawn platform.
+		buildExitCorridor(level, arenaCenter, slot, zoneCenter.getY() - 1);
+	}
+
+	private static void buildExitCorridor(
+			ServerLevel level,
+			BlockPos arenaCenter,
+			int slot,
+			int floorY) {
+		Direction inward = ArenaCountryBaseLayout.inwardDirection(slot);
+		Direction side = ArenaCountryBaseLayout.outwardDirection(slot).getClockWise();
+		BlockPos zoneCenter = ArenaCountryBaseLayout.spawnZoneCenter(arenaCenter, slot);
+		int corridorWidthHalf = 2; // 5 blocks wide
+		int fromForward = 0;
+		int toForward = 16;
+
+		for (int forward = fromForward; forward <= toForward; forward++) {
+			for (int lateral = -corridorWidthHalf; lateral <= corridorWidthHalf; lateral++) {
+				BlockPos floor = new BlockPos(
+						zoneCenter.getX() + inward.getStepX() * forward + side.getStepX() * lateral,
+						floorY,
+						zoneCenter.getZ() + inward.getStepZ() * forward + side.getStepZ() * lateral);
+				if (!ArenaPositions.isInsideCombatWalkable(arenaCenter, floor.above())) {
+					continue;
+				}
+				set(level, floor, Blocks.SMOOTH_STONE.defaultBlockState());
+				// Guarantee at least 3 blocks of free head room over the route.
+				set(level, floor.above(), Blocks.AIR.defaultBlockState());
+				set(level, floor.above(2), Blocks.AIR.defaultBlockState());
+				set(level, floor.above(3), Blocks.AIR.defaultBlockState());
 			}
 		}
 	}
@@ -115,6 +147,7 @@ public final class ArenaCoreBuilder {
 		BlockPos footing = core.below();
 
 		clearFortressVolume(level, footing, outward, inward, side);
+		refillFortressApron(level, footing, outward, side);
 
 		// Pedestal (1 block) — 7×5 footprint
 		for (int o = -1; o <= 1; o++) {
@@ -243,6 +276,23 @@ public final class ArenaCoreBuilder {
 		// Side decor chains (off walkway)
 		set(level, footing.relative(side, 3).relative(outward, 2).above(6), Blocks.CHAIN.defaultBlockState());
 		set(level, footing.relative(side, -3).relative(outward, 2).above(6), Blocks.CHAIN.defaultBlockState());
+	}
+
+	/**
+	 * Restores a flat walkable floor around the fortress after volume clear.
+	 * Prevents one-block trenches where fighters can drop/get stuck.
+	 */
+	private static void refillFortressApron(
+			ServerLevel level,
+			BlockPos footing,
+			Direction outward,
+			Direction side) {
+		for (int o = -2; o <= 3; o++) {
+			for (int s = -7; s <= 7; s++) {
+				BlockPos floor = footing.relative(outward, o).relative(side, s);
+				set(level, floor, Blocks.SMOOTH_STONE.defaultBlockState());
+			}
+		}
 	}
 
 	private static Block pickTowerBlock(VisualMaterials mats, int height, int dx, int dz) {

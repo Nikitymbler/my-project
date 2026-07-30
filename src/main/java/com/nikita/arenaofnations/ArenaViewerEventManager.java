@@ -5,7 +5,6 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -14,8 +13,6 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -34,13 +31,21 @@ public final class ArenaViewerEventManager {
 	private static final ArenaViewerEventManager INSTANCE = new ArenaViewerEventManager();
 
 	private static final int MAX_DEDUP_IDS = 20_000;
+	private static final int MAX_VIEWER_COUNTRY_SELECTIONS = 5_000;
 	private static final int MAX_EVENTS_PER_TICK = 256;
 	private static final int DEDUP_CLEANUP_INTERVAL_TICKS = 200;
 
 	private final ConcurrentLinkedQueue<Object> queue = new ConcurrentLinkedQueue<>();
 	private final AtomicInteger queueSize = new AtomicInteger(0);
-	private final ConcurrentHashMap<String, Country> countryByViewer = new ConcurrentHashMap<>();
-	private final ConcurrentHashMap<String, String> nameByViewer = new ConcurrentHashMap<>();
+	private final Object queueMutex = new Object();
+	/** Access-ordered; eldest entries evicted when over {@link #MAX_VIEWER_COUNTRY_SELECTIONS}. */
+	private final Map<String, Country> countryByViewer = new LinkedHashMap<>(16, 0.75F, true) {
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<String, Country> eldest) {
+			return size() > MAX_VIEWER_COUNTRY_SELECTIONS;
+		}
+	};
+	private final Object countryByViewerMutex = new Object();
 
 	private final Map<String, Long> processedGiftIds = new LinkedHashMap<>();
 
@@ -69,8 +74,6 @@ public final class ArenaViewerEventManager {
 	}
 
 	public static void register() {
-		ServerTickEvents.END_SERVER_TICK.register(server -> INSTANCE.tick(server));
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> INSTANCE.clearTransientState());
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 			dispatcher.register(Commands.literal("arena_viewer_chat")
 					.requires(source -> source.hasPermission(2))
@@ -210,7 +213,9 @@ public final class ArenaViewerEventManager {
 	}
 
 	public int getViewerSelectionCount() {
-		return countryByViewer.size();
+		synchronized (countryByViewerMutex) {
+			return countryByViewer.size();
+		}
 	}
 
 	public EnumMap<Country, Integer> getCountrySelectionCounts() {
@@ -218,17 +223,22 @@ public final class ArenaViewerEventManager {
 		for (Country country : Country.values()) {
 			counts.put(country, 0);
 		}
-		for (Country country : countryByViewer.values()) {
-			counts.merge(country, 1, Integer::sum);
+		synchronized (countryByViewerMutex) {
+			for (Country country : countryByViewer.values()) {
+				counts.merge(country, 1, Integer::sum);
+			}
 		}
 		return counts;
 	}
 
 	public void clearTransientState() {
-		queue.clear();
-		queueSize.set(0);
-		countryByViewer.clear();
-		nameByViewer.clear();
+		synchronized (queueMutex) {
+			queue.clear();
+			queueSize.set(0);
+		}
+		synchronized (countryByViewerMutex) {
+			countryByViewer.clear();
+		}
 		synchronized (processedGiftIds) {
 			processedGiftIds.clear();
 		}
@@ -276,20 +286,22 @@ public final class ArenaViewerEventManager {
 
 	private boolean offer(Object event) {
 		int limit = ArenaConfig.get().getViewerEventQueueLimit();
-		while (true) {
-			int size = queueSize.get();
-			if (size >= limit) {
+		synchronized (queueMutex) {
+			if (queueSize.get() >= limit) {
 				queueOverflows.incrementAndGet();
 				return false;
 			}
-			if (queueSize.compareAndSet(size, size + 1)) {
-				queue.offer(event);
-				return true;
-			}
+			queue.offer(event);
+			queueSize.incrementAndGet();
+			return true;
 		}
 	}
 
-	private void tick(MinecraftServer server) {
+	/**
+	 * Drain up to 256 queued viewer events on the server thread.
+	 * Called from {@link ArenaMatchManager} before match/rescue ticks.
+	 */
+	public void processQueuedEvents(MinecraftServer server) {
 		ticksSinceDedupCleanup++;
 		if (ticksSinceDedupCleanup >= DEDUP_CLEANUP_INTERVAL_TICKS) {
 			ticksSinceDedupCleanup = 0;
@@ -298,11 +310,16 @@ public final class ArenaViewerEventManager {
 
 		int processed = 0;
 		while (processed < MAX_EVENTS_PER_TICK) {
-			Object event = queue.poll();
+			Object event;
+			synchronized (queueMutex) {
+				event = queue.poll();
+				if (event != null) {
+					queueSize.updateAndGet(value -> Math.max(0, value - 1));
+				}
+			}
 			if (event == null) {
 				break;
 			}
-			queueSize.updateAndGet(value -> Math.max(0, value - 1));
 			processed++;
 
 			if (event instanceof ViewerChatEvent chat) {
@@ -331,8 +348,9 @@ public final class ArenaViewerEventManager {
 		}
 
 		String viewerId = event.viewerId();
-		countryByViewer.put(viewerId, country);
-		nameByViewer.put(viewerId, event.viewerName());
+		synchronized (countryByViewerMutex) {
+			countryByViewer.put(viewerId, country);
+		}
 		acceptedChatEvents.incrementAndGet();
 		lastCountryCode = country.getCode();
 		lastGiftSummary = "";
@@ -359,7 +377,10 @@ public final class ArenaViewerEventManager {
 			return;
 		}
 
-		Country country = countryByViewer.get(event.viewerId());
+		Country country;
+		synchronized (countryByViewerMutex) {
+			country = countryByViewer.get(event.viewerId());
+		}
 		if (country == null) {
 			rejectedGifts.incrementAndGet();
 			lastError = "country_not_selected";
@@ -383,8 +404,6 @@ public final class ArenaViewerEventManager {
 				return;
 			}
 		}
-
-		nameByViewer.put(event.viewerId(), event.viewerName());
 
 		ServerLevel level = ArenaSpawns.resolveFightLevel(server, server.overworld());
 		Vec3 origin = resolveGiftOrigin(server, level);

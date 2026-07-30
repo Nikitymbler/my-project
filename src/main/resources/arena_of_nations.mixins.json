@@ -3,7 +3,6 @@
 	"package": "com.nikita.arenaofnations.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"ExampleMixin",
 		"LivingEntityHurtMixin"
 	],
 	"injectors": {

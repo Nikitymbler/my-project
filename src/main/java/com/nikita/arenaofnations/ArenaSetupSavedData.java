@@ -14,7 +14,7 @@ import net.minecraft.world.level.saveddata.SavedData;
  */
 public final class ArenaSetupSavedData extends SavedData {
 	public static final String DATA_NAME = "arena_of_nations_setup";
-	public static final int CURRENT_BUILD_VERSION = 1;
+	public static final int CURRENT_BUILD_VERSION = 2;
 
 	public static final Factory<ArenaSetupSavedData> FACTORY = new Factory<>(
 			ArenaSetupSavedData::new,

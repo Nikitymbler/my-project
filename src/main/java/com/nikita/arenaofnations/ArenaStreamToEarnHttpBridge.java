@@ -7,7 +7,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -56,7 +55,11 @@ public final class ArenaStreamToEarnHttpBridge {
 			return;
 		}
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> startHttpServer());
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> stopHttpServer());
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			// Stop accepting HTTP first, then clear the queue (avoids enqueue-after-clear race).
+			stopHttpServer();
+			ArenaViewerEventManager.get().clearTransientState();
+		});
 	}
 
 	public static boolean isRunning() {
@@ -81,11 +84,12 @@ public final class ArenaStreamToEarnHttpBridge {
 	}
 
 	public static String getOverlayUrl() {
-		return "http://" + runningBindAddress + ":" + runningPort + "/overlay";
+		return "http://" + ArenaOverlayHttpServer.getBindAddress() + ":"
+				+ ArenaOverlayHttpServer.getRunningPort() + "/overlay";
 	}
 
 	public static String getTikTokOverlayUrl() {
-		return "http://" + runningBindAddress + ":" + runningPort + "/overlay/tiktok";
+		return ArenaOverlayHttpServer.getLocalTikTokUrl();
 	}
 
 	public static boolean isTokenConfigured() {
@@ -104,38 +108,28 @@ public final class ArenaStreamToEarnHttpBridge {
 			}
 
 			ArenaConfig config = ArenaConfig.get();
-			boolean overlayEnabled = config.isOverlayEnabled();
 			boolean s2eEnabled = config.isS2eHttpEnabled();
-			if (!overlayEnabled && !s2eEnabled) {
-				ArenaOfNations.LOGGER.info("Local HTTP bridge disabled (overlay_enabled=false and s2e_http_enabled=false).");
+			if (!s2eEnabled) {
+				ArenaOfNations.LOGGER.info("StreamToEarn HTTP bridge disabled (s2e_http_enabled=false).");
 				return;
 			}
-			if (s2eEnabled && !config.isS2eHttpTokenConfigured()) {
+			if (!config.isS2eHttpTokenConfigured()) {
 				ArenaOfNations.LOGGER.warn(
-						"StreamToEarn HTTP bridge enabled but s2e_http_token is empty; S2E endpoints disabled.");
-				s2eEnabled = false;
-			}
-			if (!overlayEnabled && !s2eEnabled) {
+						"StreamToEarn HTTP bridge enabled but s2e_http_token is empty; bridge not started.");
 				return;
 			}
 
 			String bindHost = resolveSafeBindHost(config.getOverlayBindAddress());
-			int port = overlayEnabled ? config.getOverlayPort() : config.getS2eHttpPort();
+			int port = config.getS2eHttpPort();
+			HttpServer server = null;
 			try {
 				InetSocketAddress address = new InetSocketAddress(bindHost, port);
-				HttpServer server = HttpServer.create(address, 0);
+				server = HttpServer.create(address, 0);
 				server.createContext("/arena/health", ArenaStreamToEarnHttpBridge::handleHealth);
-				if (s2eEnabled) {
-					server.createContext("/arena/chat", exchange -> handlePayload(exchange, true));
-					server.createContext("/arena/gift", exchange -> handlePayload(exchange, false));
-					server.createContext("/arena/streamtoearn/chat", exchange -> handleStreamToEarnBodyAuth(exchange, true));
-					server.createContext("/arena/streamtoearn/gift", exchange -> handleStreamToEarnBodyAuth(exchange, false));
-				}
-				if (overlayEnabled) {
-					server.createContext("/api/arena/state", ArenaStreamToEarnHttpBridge::handleOverlayState);
-					server.createContext("/overlay", ArenaStreamToEarnHttpBridge::handleOverlayIndex);
-					server.createContext("/overlay/", ArenaStreamToEarnHttpBridge::handleOverlayAsset);
-				}
+				server.createContext("/arena/chat", exchange -> handlePayload(exchange, true));
+				server.createContext("/arena/gift", exchange -> handlePayload(exchange, false));
+				server.createContext("/arena/streamtoearn/chat", exchange -> handleStreamToEarnBodyAuth(exchange, true));
+				server.createContext("/arena/streamtoearn/gift", exchange -> handleStreamToEarnBodyAuth(exchange, false));
 
 				ExecutorService httpExecutor = Executors.newCachedThreadPool(daemonFactory());
 				server.setExecutor(httpExecutor);
@@ -144,23 +138,28 @@ public final class ArenaStreamToEarnHttpBridge {
 				httpServer = server;
 				executor = httpExecutor;
 				running = true;
-				s2eEndpointsActive = s2eEnabled;
+				s2eEndpointsActive = true;
 				runningBindAddress = bindHost;
 				runningPort = port;
 
 				ArenaOfNations.LOGGER.info(
-						"Local HTTP bridge started on http://{}:{} (overlay={}, s2e={})",
+						"StreamToEarn HTTP bridge started on http://{}:{} (gift/chat only; overlay is on separate port)",
 						bindHost,
-						port,
-						overlayEnabled,
-						s2eEnabled);
+						port);
 			} catch (Exception e) {
+				if (server != null) {
+					try {
+						server.stop(0);
+					} catch (Exception stopError) {
+						ArenaOfNations.LOGGER.debug("Failed to stop partially started HTTP bridge", stopError);
+					}
+				}
 				running = false;
 				s2eEndpointsActive = false;
 				httpServer = null;
 				shutdownExecutorQuietly();
 				ArenaOfNations.LOGGER.error(
-						"Failed to start StreamToEarn HTTP bridge on {}:{} — mod continues without HTTP bridge",
+						"Failed to start StreamToEarn HTTP bridge on {}:{} — mod continues without S2E bridge",
 						bindHost,
 						port,
 						e);
@@ -378,12 +377,20 @@ public final class ArenaStreamToEarnHttpBridge {
 			sendJson(exchange, 400, jsonAccepted(false, "missing_field"), null);
 			return;
 		}
+		if (containsPayloadSeparator(viewerId)) {
+			sendJson(exchange, 400, jsonAccepted(false, "invalid_field"), null);
+			return;
+		}
 
 		String payload;
 		if (chat) {
 			String message = readJsonStringField(obj, "message", true);
 			if (message == null) {
 				sendJson(exchange, 400, jsonAccepted(false, "missing_field"), null);
+				return;
+			}
+			if (containsPayloadSeparator(message)) {
+				sendJson(exchange, 400, jsonAccepted(false, "invalid_field"), null);
 				return;
 			}
 			payload = viewerId + SEPARATOR + message;
@@ -394,6 +401,10 @@ public final class ArenaStreamToEarnHttpBridge {
 				return;
 			}
 			String eventId = readJsonStringField(obj, "eventId", false);
+			if (eventId != null && !eventId.isEmpty() && containsPayloadSeparator(eventId)) {
+				sendJson(exchange, 400, jsonAccepted(false, "invalid_field"), null);
+				return;
+			}
 			if (eventId != null && !eventId.isEmpty()) {
 				payload = viewerId + SEPARATOR + coins + SEPARATOR + eventId;
 			} else {
@@ -408,6 +419,10 @@ public final class ArenaStreamToEarnHttpBridge {
 		}
 
 		respondAcceptResult(exchange, chat, payload);
+	}
+
+	private static boolean containsPayloadSeparator(String value) {
+		return value != null && value.contains(SEPARATOR);
 	}
 
 	/**
@@ -516,108 +531,6 @@ public final class ArenaStreamToEarnHttpBridge {
 			return SAFE_BIND_HOST;
 		}
 		return value;
-	}
-
-	private static void handleOverlayState(HttpExchange exchange) throws IOException {
-		try {
-			if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-				sendJson(exchange, 405, "{\"ok\":false,\"reason\":\"method_not_allowed\"}", "GET");
-				return;
-			}
-			ArenaOverlayStateService.get().markAndGetRequestCount();
-			byte[] bytes = ArenaOverlayStateService.get().snapshotJson().getBytes(StandardCharsets.UTF_8);
-			Headers headers = exchange.getResponseHeaders();
-			headers.set("Content-Type", "application/json; charset=utf-8");
-			headers.set("Cache-Control", "no-store");
-			exchange.sendResponseHeaders(200, bytes.length);
-			try (OutputStream out = exchange.getResponseBody()) {
-				out.write(bytes);
-			}
-		} catch (Exception e) {
-			ArenaOfNations.LOGGER.error("Overlay state endpoint failed", e);
-			sendJson(exchange, 500, "{\"ok\":false,\"reason\":\"internal_error\"}", null);
-		}
-	}
-
-	private static void handleOverlayIndex(HttpExchange exchange) throws IOException {
-		if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-			sendJson(exchange, 405, "{\"ok\":false,\"reason\":\"method_not_allowed\"}", "GET");
-			return;
-		}
-		writeResource(exchange, "assets/arena_of_nations/overlay/index.html", "text/html; charset=utf-8");
-	}
-
-	private static void handleOverlayAsset(HttpExchange exchange) throws IOException {
-		if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-			sendJson(exchange, 405, "{\"ok\":false,\"reason\":\"method_not_allowed\"}", "GET");
-			return;
-		}
-		String path = exchange.getRequestURI().getPath();
-		String suffix = path.substring("/overlay/".length());
-		if (suffix.isBlank() || suffix.contains("..")) {
-			writeResource(exchange, "assets/arena_of_nations/overlay/index.html", "text/html; charset=utf-8");
-			return;
-		}
-		// Directory routes: /overlay/tiktok and /overlay/tiktok/ → tiktok/index.html
-		if ("tiktok".equals(suffix) || "tiktok/".equals(suffix)) {
-			writeResource(exchange, "assets/arena_of_nations/overlay/tiktok/index.html", "text/html; charset=utf-8");
-			return;
-		}
-		String resourcePath = "assets/arena_of_nations/overlay/" + suffix;
-		if (suffix.endsWith("/")) {
-			resourcePath = resourcePath + "index.html";
-		}
-		String mime = guessMime(resourcePath);
-		writeResource(exchange, resourcePath, mime);
-	}
-
-	private static void writeResource(HttpExchange exchange, String resourcePath, String contentType) throws IOException {
-		try (InputStream in = ArenaStreamToEarnHttpBridge.class.getClassLoader().getResourceAsStream(resourcePath)) {
-			if (in == null) {
-				sendJson(exchange, 404, "{\"ok\":false,\"reason\":\"not_found\"}", null);
-				return;
-			}
-			byte[] bytes = in.readAllBytes();
-			Headers headers = exchange.getResponseHeaders();
-			headers.set("Content-Type", contentType);
-			String lower = resourcePath.toLowerCase(Locale.ROOT);
-			if (lower.endsWith(".png") || lower.endsWith(".svg") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp")) {
-				// Stable flag/image assets — allow CEF to keep decoded bitmaps across overlay polls.
-				headers.set("Cache-Control", "public, max-age=86400");
-			} else {
-				headers.set("Cache-Control", "no-store");
-			}
-			exchange.sendResponseHeaders(200, bytes.length);
-			try (OutputStream out = exchange.getResponseBody()) {
-				out.write(bytes);
-			}
-		}
-	}
-
-	private static String guessMime(String path) {
-		String lower = path.toLowerCase(Locale.ROOT);
-		if (lower.endsWith(".css")) {
-			return "text/css; charset=utf-8";
-		}
-		if (lower.endsWith(".js")) {
-			return "application/javascript; charset=utf-8";
-		}
-		if (lower.endsWith(".svg")) {
-			return "image/svg+xml";
-		}
-		if (lower.endsWith(".png")) {
-			return "image/png";
-		}
-		if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
-			return "image/jpeg";
-		}
-		if (lower.endsWith(".webp")) {
-			return "image/webp";
-		}
-		if (lower.endsWith(".html")) {
-			return "text/html; charset=utf-8";
-		}
-		return "application/octet-stream";
 	}
 
 	/**

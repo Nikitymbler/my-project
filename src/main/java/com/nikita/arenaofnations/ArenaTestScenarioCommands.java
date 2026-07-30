@@ -64,7 +64,10 @@ final class ArenaTestScenarioCommands {
 			"core_structure_integrity",
 			"full_country_lifecycle",
 			"mass_duel_reserve",
-			"fighter_flags_test");
+			"fighter_flags_test",
+			"base_flag_lifecycle",
+			"base_exit_pathing",
+			"break_multi_country_queue");
 
 	private static DeferredScenario deferred;
 
@@ -244,6 +247,9 @@ final class ArenaTestScenarioCommands {
 				case "overlay_tiktok_test" -> runOverlayTikTokTest(server, level, origin);
 				case "core_structure_integrity" -> runCoreStructureIntegrity(server, level, origin);
 				case "fighter_flags_test" -> runFighterFlagsTest(server, level, origin);
+				case "base_flag_lifecycle" -> runBaseFlagLifecycle(server, level, origin);
+				case "base_exit_pathing" -> runBaseExitPathing(server, level, origin);
+				case "break_multi_country_queue" -> runBreakMultiCountryQueue(server, level, origin);
 				default -> "Неизвестный сценарий.";
 			};
 
@@ -998,6 +1004,150 @@ final class ArenaTestScenarioCommands {
 				+ " — визуальная проверка PNG-флагов 128×80.";
 	}
 
+	private static String runBaseFlagLifecycle(MinecraftServer server, ServerLevel level, Vec3 origin) {
+		ArenaMatchManager match = ArenaMatchManager.get();
+		ArenaCoreRescueManager rescue = ArenaCoreRescueManager.get();
+		match.reset(server);
+
+		String stage = "STAGE1";
+		Country ru = Country.RU;
+		Country ua = Country.UA;
+		Country kz = Country.KZ;
+
+		if (ArenaBaseFlagVisibility.shouldShow(false, false, -1)) {
+			return failBaseFlagLifecycle(stage, "RU hidden expected before first gift");
+		}
+
+		stage = "STAGE2";
+		gift(server, level, origin, ru, FighterTier.SCOUT);
+		if (!expectedBaseFlagVisible(server, ru)) {
+			return failBaseFlagLifecycle(stage, "RU flag not visible after first gift");
+		}
+
+		stage = "STAGE3";
+		gift(server, level, origin, ua, FighterTier.SCOUT);
+		if (!expectedBaseFlagVisible(server, ru) || !expectedBaseFlagVisible(server, ua)) {
+			return failBaseFlagLifecycle(stage, "RU/UA both should be visible after second country joins");
+		}
+
+		// Keep one extra participant so RU does not disappear from list on UA elimination.
+		gift(server, level, origin, kz, FighterTier.SCOUT);
+
+		stage = "STAGE4";
+		discardCountryFighters(level, ua);
+		setCoreHp(server, ua, 0.0F);
+		rescue.forceTestRescue(server, ua);
+		if (!rescue.isRescuing(ua) || !expectedBaseFlagVisible(server, ua)) {
+			return failBaseFlagLifecycle(stage, "UA rescue expected with visible flag");
+		}
+
+		stage = "STAGE5";
+		gift(server, level, origin, ua, FighterTier.SCOUT);
+		rescue.tick(server);
+		if (!expectedBaseFlagVisible(server, ua) || rescue.isEliminated(ua)) {
+			return failBaseFlagLifecycle(stage, "UA rescue gift should keep flag visible");
+		}
+
+		stage = "STAGE6";
+		rescue.forceTestElimination(server, ua);
+		if (expectedBaseFlagVisible(server, ua)) {
+			return failBaseFlagLifecycle(stage, "UA flag must disappear after elimination");
+		}
+
+		stage = "STAGE7";
+		if (!expectedBaseFlagVisible(server, ru)) {
+			return failBaseFlagLifecycle(stage, "RU flag disappeared before round reset");
+		}
+
+		stage = "STAGE8";
+		match.reset(server);
+		if (expectedBaseFlagVisible(server, ru) || expectedBaseFlagVisible(server, ua)) {
+			return failBaseFlagLifecycle(stage, "Old flags should be hidden after reset");
+		}
+
+		return "BASE FLAG LIFECYCLE: PASS";
+	}
+
+	private static String runBaseExitPathing(MinecraftServer server, ServerLevel level, Vec3 origin) {
+		ArenaMatchManager match = ArenaMatchManager.get();
+		match.reset(server);
+		gift(server, level, origin, Country.RU, FighterTier.SCOUT);
+		gift(server, level, origin, Country.UA, FighterTier.SCOUT);
+
+		BlockPos center = BlockPos.containing(match.getMatchCenter());
+		ServerLevel fight = ArenaSpawns.resolveFightLevel(server, level);
+		if (center.equals(BlockPos.ZERO)) {
+			return "BASE EXIT PATHING: FAILED\nstage=SETUP\nreason=arena center missing";
+		}
+
+		Country[] pair = {Country.RU, Country.UA};
+		for (Country country : pair) {
+			int slot = match.getBaseSlot(country);
+			if (slot < 0) {
+				return "BASE EXIT PATHING: FAILED\nstage=SETUP\nreason=no base slot for " + country.getCode();
+			}
+			BlockPos spawnCenter = ArenaCountryBaseLayout.spawnZoneCenter(center, slot);
+			BlockPos exit = spawnCenter.relative(ArenaCountryBaseLayout.inwardDirection(slot), 12);
+			if (!ArenaLayoutPathfinder.hasNavigationPathToTarget(fight, spawnCenter, exit)) {
+				return "BASE EXIT PATHING: FAILED\nstage=PATH\nreason=no spawn->exit path for " + country.getCode();
+			}
+			if (!ArenaLayoutPathfinder.hasNavigationPathToCenter(fight, center, spawnCenter)) {
+				return "BASE EXIT PATHING: FAILED\nstage=PATH\nreason=no path to center for " + country.getCode();
+			}
+		}
+
+		int insideSpawn = 0;
+		int belowFloor = 0;
+		int navToRally = 0;
+		int total = 0;
+		for (Entity entity : fight.getAllEntities()) {
+			if (!(entity instanceof ArenaFighterEntity fighter) || !fighter.isAlive() || !FighterFactory.isArenaFighter(fighter)) {
+				continue;
+			}
+			Country c = fighter.getArenaCountry();
+			int slot = match.getBaseSlot(c);
+			if (slot < 0) {
+				continue;
+			}
+			total++;
+			BlockPos spawnCenter = ArenaCountryBaseLayout.spawnZoneCenter(center, slot);
+			double dist = Math.sqrt(spawnCenter.distSqr(fighter.blockPosition()));
+			if (dist <= 7.0D) {
+				insideSpawn++;
+			}
+			int floorY = spawnCenter.getY() - 1;
+			if (fighter.getY() < floorY - 0.2D) {
+				belowFloor++;
+			}
+			if (fighter.getNavigation().isInProgress() && !fighter.getNavigation().isDone()) {
+				navToRally++;
+			}
+		}
+
+		if (total <= 0) {
+			return "BASE EXIT PATHING: FAILED\nstage=RESULT\nreason=no fighters on field";
+		}
+		if (belowFloor > 0) {
+			return "BASE EXIT PATHING: FAILED\nstage=RESULT\nreason=fighters below floor=" + belowFloor;
+		}
+		if (navToRally <= 0) {
+			return "BASE EXIT PATHING: FAILED\nstage=RESULT\nreason=no active navigation from spawn zones";
+		}
+		return "BASE EXIT PATHING: PASS";
+	}
+
+	private static boolean expectedBaseFlagVisible(MinecraftServer server, Country country) {
+		ArenaMatchManager match = ArenaMatchManager.get();
+		boolean participant = match.getCurrentRoundCountries().contains(country) || match.getActiveCountries().contains(country);
+		boolean eliminated = ArenaCoreRescueManager.get().isEliminated(country);
+		int slot = match.getBaseSlot(country);
+		return ArenaBaseFlagVisibility.shouldShow(participant, eliminated, slot);
+	}
+
+	private static String failBaseFlagLifecycle(String stage, String reason) {
+		return "BASE FLAG LIFECYCLE: FAILED\nstage=" + stage + "\nreason=" + reason;
+	}
+
 	private static String runLayoutSpawnTest(MinecraftServer server, ServerLevel level, Vec3 origin) {
 		ArenaMatchManager match = ArenaMatchManager.get();
 		match.reset(server);
@@ -1659,6 +1809,128 @@ final class ArenaTestScenarioCommands {
 			}
 		}
 		return server.overworld();
+	}
+
+	/**
+	 * Reproduces BREAK queue promote: gifts during BREAK must land in the next round for
+	 * every queued country (UA+RU, RU+UA, three countries, single, reset mid-break).
+	 */
+	private static String runBreakMultiCountryQueue(MinecraftServer server, ServerLevel level, Vec3 origin) {
+		java.util.List<String> errors = new java.util.ArrayList<>();
+		ArenaMatchManager match = ArenaMatchManager.get();
+
+		// Case A: UA then RU during BREAK → both in next round, queue drained.
+		match.reset(server);
+		match.beginBreakForTest(server);
+		match.handleGift(server, level, origin, Country.UA, 10);
+		match.handleGift(server, level, origin, Country.RU, 10);
+		if (match.getState() != ArenaMatchState.BREAK) {
+			errors.add("A state after gifts=" + match.getState());
+		}
+		if (match.getNextRoundQueueSize() != 20) {
+			errors.add("A queue after gifts=" + match.getNextRoundQueueSize());
+		}
+		match.forceBreakTimeoutForTest(server);
+		if (match.getState() != ArenaMatchState.BATTLE) {
+			errors.add("A expected BATTLE after promote, got " + match.getState());
+		}
+		if (!match.getActiveCountries().contains(Country.UA) || !match.getActiveCountries().contains(Country.RU)) {
+			errors.add("A active=" + match.getActiveCountries());
+		}
+		if (match.getReserveSize(Country.UA) != 10) {
+			errors.add("A UA reserve=" + match.getReserveSize(Country.UA));
+		}
+		if (match.getReserveSize(Country.RU) != 10) {
+			errors.add("A RU reserve=" + match.getReserveSize(Country.RU));
+		}
+		if (match.getNextRoundQueueSize() != 0) {
+			errors.add("A leftover queue=" + match.getNextRoundQueueSize());
+		}
+
+		// Case B: RU then UA (order reversed).
+		match.reset(server);
+		match.beginBreakForTest(server);
+		match.handleGift(server, level, origin, Country.RU, 5);
+		match.handleGift(server, level, origin, Country.UA, 7);
+		match.forceBreakTimeoutForTest(server);
+		if (match.getState() != ArenaMatchState.BATTLE
+				|| !match.getActiveCountries().contains(Country.RU)
+				|| !match.getActiveCountries().contains(Country.UA)
+				|| match.getReserveSize(Country.RU) != 5
+				|| match.getReserveSize(Country.UA) != 7
+				|| match.getNextRoundQueueSize() != 0) {
+			errors.add("B failed state=" + match.getState()
+					+ " active=" + match.getActiveCountries()
+					+ " ruRes=" + match.getReserveSize(Country.RU)
+					+ " uaRes=" + match.getReserveSize(Country.UA)
+					+ " queue=" + match.getNextRoundQueueSize());
+		}
+
+		// Case C: UA → RU → UA again (repeat gift).
+		match.reset(server);
+		match.beginBreakForTest(server);
+		match.handleGift(server, level, origin, Country.UA, 3);
+		match.handleGift(server, level, origin, Country.RU, 4);
+		match.handleGift(server, level, origin, Country.UA, 2);
+		match.forceBreakTimeoutForTest(server);
+		if (match.getReserveSize(Country.UA) != 5 || match.getReserveSize(Country.RU) != 4
+				|| match.getNextRoundQueueSize() != 0
+				|| match.getActiveCountries().size() != 2) {
+			errors.add("C failed uaRes=" + match.getReserveSize(Country.UA)
+					+ " ruRes=" + match.getReserveSize(Country.RU)
+					+ " active=" + match.getActiveCountries().size()
+					+ " queue=" + match.getNextRoundQueueSize());
+		}
+
+		// Case D: three countries.
+		match.reset(server);
+		match.beginBreakForTest(server);
+		match.handleGift(server, level, origin, Country.UA, 2);
+		match.handleGift(server, level, origin, Country.RU, 2);
+		match.handleGift(server, level, origin, Country.KZ, 2);
+		match.forceBreakTimeoutForTest(server);
+		if (match.getState() != ArenaMatchState.BATTLE
+				|| match.getActiveCountries().size() != 3
+				|| match.getReserveSize(Country.KZ) != 2
+				|| match.getNextRoundQueueSize() != 0) {
+			errors.add("D failed state=" + match.getState()
+					+ " active=" + match.getActiveCountries().size()
+					+ " kzRes=" + match.getReserveSize(Country.KZ)
+					+ " queue=" + match.getNextRoundQueueSize());
+		}
+
+		// Case E: single country stays WAITING, queue empty.
+		match.reset(server);
+		match.beginBreakForTest(server);
+		match.handleGift(server, level, origin, Country.UA, 8);
+		match.forceBreakTimeoutForTest(server);
+		if (match.getState() != ArenaMatchState.WAITING_FOR_OPPONENT
+				|| !match.getActiveCountries().contains(Country.UA)
+				|| match.getActiveCountries().size() != 1
+				|| match.getReserveSize(Country.UA) != 8
+				|| match.getNextRoundQueueSize() != 0) {
+			errors.add("E failed state=" + match.getState()
+					+ " active=" + match.getActiveCountries()
+					+ " uaRes=" + match.getReserveSize(Country.UA)
+					+ " queue=" + match.getNextRoundQueueSize());
+		}
+
+		// Case F: reset during BREAK clears queue.
+		match.reset(server);
+		match.beginBreakForTest(server);
+		match.handleGift(server, level, origin, Country.UA, 10);
+		match.handleGift(server, level, origin, Country.RU, 10);
+		match.reset(server);
+		if (match.getState() != ArenaMatchState.IDLE || match.getNextRoundQueueSize() != 0) {
+			errors.add("F failed state=" + match.getState() + " queue=" + match.getNextRoundQueueSize());
+		}
+
+		ArenaRoundHudSync.pushNow(server);
+		if (errors.isEmpty()) {
+			return "BREAK MULTI COUNTRY QUEUE: PASS\n"
+					+ "A UA+RU, B RU+UA, C UA+RU+UA, D three, E single WAITING, F reset mid-BREAK.";
+		}
+		return "BREAK MULTI COUNTRY QUEUE: FAILED\n" + String.join("\n", errors);
 	}
 
 	private static void giftMany(

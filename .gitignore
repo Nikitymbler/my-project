@@ -32,6 +32,15 @@ bin/
 
 run/
 
+# cloudflared / overlay secrets (never commit)
+**/cloudflared.exe
+C:/Cloudflared/
+tools/overlay-setup/*.token
+tools/overlay-setup/*credentials*
+tools/overlay-setup/*.json
+*.tunnel-token
+**/overlay-public-config.local.*
+
 # java
 
 hs_err_*.log

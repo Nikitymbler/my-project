@@ -12,8 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 /**
- * Renders every arena fighter with the shared wide Steve humanoid model
- * and country/tier skin selected by ArenaFighterVisuals.
+ * Renders every arena fighter with the shared wide Steve humanoid model.
  * Overhead country flag + health bar replace the vanilla name tag.
  */
 public class ArenaFighterRenderer extends MobRenderer<ArenaFighterEntity, PlayerModel<ArenaFighterEntity>> {

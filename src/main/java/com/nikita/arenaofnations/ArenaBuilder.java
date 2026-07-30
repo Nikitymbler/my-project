@@ -8,7 +8,7 @@ import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * Deterministic large medieval coliseum builder (version 1).
+ * Deterministic large medieval coliseum builder (version 2).
  * Generates placements stage-by-stage without preloading the entire arena into memory.
  */
 final class ArenaBuilder {

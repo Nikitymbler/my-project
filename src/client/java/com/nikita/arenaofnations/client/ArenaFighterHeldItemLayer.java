@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 
 import com.nikita.arenaofnations.ArenaFighterEntity;
+import com.nikita.arenaofnations.ArenaItems;
 
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.renderer.ItemInHandRenderer;
@@ -21,6 +22,14 @@ import net.minecraft.world.item.Items;
  */
 public class ArenaFighterHeldItemLayer
 		extends RenderLayer<ArenaFighterEntity, PlayerModel<ArenaFighterEntity>> {
+	public static final boolean ITEM_IN_HAND_LAYER_REGISTERED = true;
+	public static final boolean CUSTOM_WEAPON_LAYER_REGISTERED = false;
+	public static final int WEAPON_LAYER_COUNT = 1;
+	/** Extra X-axis tilt applied after hand transform for the glaive tip-forward pose. */
+	public static final float GLAIVE_ANGLE_DEGREES = -20.0F;
+	/** Extra PoseStack scale for the glaive (model display scale is separate). */
+	public static final float GLAIVE_LAYER_SCALE = 1.05F;
+
 	private final ItemInHandRenderer itemInHandRenderer;
 
 	public ArenaFighterHeldItemLayer(
@@ -74,6 +83,13 @@ public class ArenaFighterHeldItemLayer
 
 		boolean leftHand = arm == HumanoidArm.LEFT;
 		poseStack.translate((leftHand ? -1.0F : 1.0F) / 16.0F, 0.125F, -0.625F);
+
+		if (!leftHand && stack.is(ArenaItems.MEDIEVAL_SPEAR)) {
+			// Thin glaive: grip in lower third, tip up/forward, follow right-hand swing.
+			poseStack.translate(0.0F, -0.02F, -0.08F);
+			poseStack.mulPose(Axis.XP.rotationDegrees(GLAIVE_ANGLE_DEGREES));
+			poseStack.scale(GLAIVE_LAYER_SCALE, GLAIVE_LAYER_SCALE, GLAIVE_LAYER_SCALE);
+		}
 
 		// Face the shield outward on the offhand (same side convention as vanilla left-hand items).
 		if (leftHand && stack.is(Items.SHIELD)) {

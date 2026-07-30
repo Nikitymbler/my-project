@@ -68,6 +68,7 @@ final class ArenaBaseMarkerCommands {
 		}
 		return "Base markers (server sync):\n"
 				+ "default=on (client toggle via /arena_base_markers)\n"
+				+ "visibility=participant && !eliminated && baseSlot>=0\n"
 				+ "active_markers=" + withSlots + '\n'
 				+ "client_state_entries=" + snapshot.countries().size() + '\n'
 				+ "arena_center_valid=" + snapshot.arenaCenterValid() + '\n'

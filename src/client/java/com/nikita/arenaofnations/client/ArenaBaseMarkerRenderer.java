@@ -10,6 +10,7 @@ import org.joml.Quaternionf;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
+import com.nikita.arenaofnations.ArenaBaseFlagVisibility;
 import com.nikita.arenaofnations.ArenaCountryBaseLayout;
 import com.nikita.arenaofnations.ArenaHudCountryState;
 import com.nikita.arenaofnations.ArenaHudSnapshot;
@@ -84,7 +85,10 @@ public final class ArenaBaseMarkerRenderer {
 		List<ArenaBaseMarkerSettings.MarkerDiag> diags = new ArrayList<>();
 
 		for (ArenaHudCountryState row : snapshot.countries()) {
-			if (row.baseSlot() < 0) {
+			if (!ArenaBaseFlagVisibility.shouldShow(row)) {
+				if (diags.size() < 5) {
+					diags.add(diagHidden(row, ArenaBaseFlagVisibility.hideReason(row)));
+				}
 				continue;
 			}
 			active++;
@@ -101,7 +105,7 @@ public final class ArenaBaseMarkerRenderer {
 
 			if (dist > ArenaBaseMarkerSettings.MAX_RENDER_DISTANCE) {
 				if (diags.size() < 5) {
-					diags.add(diag(row, texture, markerPos, dist, false, false, false));
+					diags.add(diag(row, texture, markerPos, dist, false, false, false, "distance"));
 				}
 				continue;
 			}
@@ -114,7 +118,7 @@ public final class ArenaBaseMarkerRenderer {
 			}
 			if (alpha < 0.04F) {
 				if (diags.size() < 5) {
-					diags.add(diag(row, texture, markerPos, dist, false, false, false));
+					diags.add(diag(row, texture, markerPos, dist, false, false, false, "fade"));
 				}
 				continue;
 			}
@@ -132,11 +136,26 @@ public final class ArenaBaseMarkerRenderer {
 
 			rendered++;
 			if (diags.size() < 5) {
-				diags.add(diag(row, texture, markerPos, dist, true, true, true));
+				diags.add(diag(row, texture, markerPos, dist, true, true, true, "none"));
 			}
 		}
 
 		ArenaBaseMarkerSettings.recordFrame(active, rendered, diags);
+	}
+
+	private static ArenaBaseMarkerSettings.MarkerDiag diagHidden(ArenaHudCountryState row, String reason) {
+		return new ArenaBaseMarkerSettings.MarkerDiag(
+				row.country().getId(),
+				ArenaBaseFlagTextures.texture(row.country()).toString(),
+				"slot=" + row.baseSlot(),
+				-1.0D,
+				Math.round(row.coreHealth()),
+				Math.round(row.coreMaxHealth()),
+				statusText(row),
+				false,
+				false,
+				false,
+				reason);
 	}
 
 	private static ArenaBaseMarkerSettings.MarkerDiag diag(
@@ -146,7 +165,8 @@ public final class ArenaBaseMarkerRenderer {
 			double dist,
 			boolean flag,
 			boolean text,
-			boolean hp) {
+			boolean hp,
+			String hideReason) {
 		return new ArenaBaseMarkerSettings.MarkerDiag(
 				row.country().getId(),
 				texture.toString(),
@@ -157,7 +177,8 @@ public final class ArenaBaseMarkerRenderer {
 				statusText(row),
 				flag,
 				text,
-				hp);
+				hp,
+				hideReason);
 	}
 
 	private static void renderFlag(

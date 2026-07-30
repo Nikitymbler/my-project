@@ -1,7 +1,7 @@
 ﻿# Arena of Nations — Project Status
 
 Документ состояния разработки. Источник правды — **текущий код**, не переписка.
-Дата снимка: 29 июля 2026.
+Дата снимка: 30 июля 2026.
 
 ---
 
@@ -9,7 +9,7 @@
 
 | Параметр | Значение |
 |---|---|
-| Проект | `D:\Minecraft\ArenaOfNations` |
+| Проект | `C:\Users\pavel\Desktop\ArenaOfNations` |
 | Minecraft | **1.21** |
 | Платформа | **Fabric** |
 | Fabric Loader | **0.19.3** |
@@ -122,7 +122,7 @@
 | Attack cooldown | 7 |
 | KB resist | 0.00 |
 | Visual scale | 0.85 |
-| Оружие (visual) | trident |
+| Оружие (visual) | `arena_of_nations:medieval_spear` (глефа) |
 
 ### Отключено из live-геймплея
 
@@ -160,13 +160,22 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - Клиент: широкая **PlayerModel** (`ArenaFighterHumanoidModel`, `slim=false`).
 - Слой модели: `ArenaFighterModels.HUMANOID_LAYER`.
 - Внешние слои скина включены (hat/jacket/sleeves/pants).
-- Ожидаемые скины: `assets/arena_of_nations/textures/entity/fighter/<country>/<tier>.png` (HEAVY/HERO → `elite.png` / `champion.png`).
-- Нет PNG → fallback `minecraft:textures/entity/player/wide/steve.png`.
-- Резолв текстур кэшируется; кэш сбрасывается на resource reload (`ArenaOfNationsClient` → `ArenaFighterVisuals.clearTextureCache()`).
+- **Единый скин** всех бойцов: `textures/entity/fighter/medieval_soldier.png` (Mullraugh, 64×64 Steve atlas, в ресурсах и в jar); per-country skin path не используется в live-рендере.
+- Если ресурс отсутствует, `ArenaFighterVisuals` пишет **один ERROR** в лог и не переключает бойца на `DefaultPlayerSkin/SkinManager` (раньше это давало purple/black missing texture).
+- **Плащ отключён полностью:** active cape layer удалён из `ArenaFighterRenderer`; `ArenaFighterCapeLayer` и `cape_mask.png` удалены; `/arena_visual_status` и `/arena_visual_status_client` показывают `capeEnabled=false`, `capeRenderLayers=0`, `capeResourcesLoaded=0`.
+- Резолв текстур скина кэшируется; кэш сбрасывается на resource reload.
 - Старые Blockbench-модели (в т.ч. `RuScoutModel`) **не используются** в активном renderer.
-- Полноценные фракционные скины **временно отложены**.
+- Overhead флаги бойцов: **один** путь `ArenaFighterRenderer → ArenaFighterOverheadRenderer`; рамка/флаг/HP разведены по Z; hysteresis дистанции 40→42; высота флага стабильна (visual scale, не bbHeight).
 
-Ключевые файлы: `ArenaFighterRenderer`, `ArenaFighterHumanoidModel`, `ArenaFighterVisuals`, `ArenaOfNationsClient`.
+Ключевые файлы: `ArenaFighterRenderer`, `ArenaFighterHumanoidModel`, `ArenaFighterVisuals`, `ArenaFighterOverheadRenderer`, `ArenaOfNationsClient`.
+
+### Большие флаги баз
+
+- Не entity / не block display: клиентский world billboard `ArenaBaseMarkerRenderer` (WorldRenderEvents.AFTER_ENTITIES).
+- Видимость: `ArenaBaseFlagVisibility` — участник раунда **и** не eliminated **и** `baseSlot>=0`. Не зависит от living/reserve/core HP/shield.
+- После elimination флаг скрывается; при RESCUE остаётся; после reset/BREAK snapshot очищается.
+
+Диагностика: `/arena_visual_status` (server), `/arena_visual_status_client` (client).
 
 ---
 
@@ -176,11 +185,14 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 | Класс | Main | Off |
 |---|---|---|
-| Боец (SCOUT) | trident | — |
+| Боец (SCOUT) | `arena_of_nations:medieval_spear` (глефа) | — |
 
 - Не кладётся в equipment slots.
 - Не меняет урон / loot / атрибуты.
 - `translateToHand` от parent `PlayerModel`.
+- Активный путь: `ArenaFighterHeldItemLayer` + `ItemInHandRenderer` (custom weapon layer не используется).
+- Ресурсы: thin low-poly JSON `models/item/medieval_spear.json` (7 cuboids: shaft/wrap/ferrule/blade×3/ridge) + `textures/item/medieval_spear.png` **32×32**.
+- Display thirdperson scale **0.92**, layer angle **-20°**, layer scale **1.05**; `weaponVisualType=MEDIEVAL_GLAIVE`, `weaponRenderPaths=1`, `tridentRenderPaths=0`.
 
 ---
 
@@ -329,7 +341,8 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - `CENTER_PATTERN_RADIUS=42`, `COMBAT_WALKABLE_RADIUS=64`, `SPAWN_ZONE_RADIUS=52`, `CORE_RING_RADIUS=67`, `OUTER_WALL_RADIUS=86`, `CLEAR_RADIUS=92`, `WALL_HEIGHT=12`.
 - **20** физических баз-крепостей; ворота открыты в центр, центральный бордюр без коллизии (inner ring walls убраны).
 - Build rate: `BLOCKS_PER_TICK = 500`. Стадии: clear → foundation → floor (до walkable radius) → sectors → inner ring (skip/no collision) → stands (74–82) → outer wall (86) → portal markers → lighting → **CORES (20 bases)** → finalize.
-- Команды: `/arena_build confirm`, `/arena_build_status`, `/arena_cancel_build confirm`, `/arena_setup_clear confirm` (очистка до radius 92).
+- Build version: `ArenaSetupSavedData.CURRENT_BUILD_VERSION = 2`.
+- Команды: `/arena_build confirm`, `/arena_build_status`, `/arena_cancel_build confirm`, `/arena_setup_clear confirm`, `/arena_rebuild confirm` (safe rebuild: остановка раунда + очистка footprint + запуск новой сборки).
 - Layout: `/arena_country_layout_status`, `/arena_country_layout_validate`, `/arena_country_layout_debug on|off`.
 
 ---
@@ -360,7 +373,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - `/arena_demo_four`
 
 ### Тестовые сценарии
-- `/arena_test_scenario [reset|…|twenty_countries|twenty_countries_mass|countries_joining|mass_duel_reserve|full_country_lifecycle|…]`
+- `/arena_test_scenario [reset|…|twenty_countries|twenty_countries_mass|countries_joining|mass_duel_reserve|full_country_lifecycle|base_flag_lifecycle|base_exit_pathing|…]`
 - `/arena_test_scenario mass_duel_reserve` — gift RU/UA по 1000 через резерв, волны, march, living target, melee; авто `MASS DUEL RESERVE: PASS|FAILED`
 - `/arena_lifecycle_status` / `/arena_ai_status` — living/reserve/wave/rally/nav диагностика (без tick spam)
 - `/arena_country_layout_status` — слоты/углы/core/spawn/path участников и все 20 слотов если раунд пуст
@@ -382,7 +395,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - `/arena_scores`, `/arena_scores_reset`, `/arena_damage_stats`
 
 ### Строительство
-- `/arena_build [confirm]`, `/arena_build_status`, `/arena_cancel_build [confirm]`, `/arena_setup_clear [confirm]`
+- `/arena_build [confirm]`, `/arena_build_status`, `/arena_cancel_build [confirm]`, `/arena_setup_clear [confirm]`, `/arena_rebuild [confirm]`
 
 ### Диагностика / HUD
 - `/arena_hud [on|off|toggle|status]`
@@ -421,20 +434,21 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - Core damage **не** перестраивает блоки базы; фонари на stone brick + chain; `UPDATE_SUPPRESS_DROPS`.
 
 ### Внешний browser overlay
-- Desktop preview: `http://127.0.0.1:8765/overlay`
-- **TikTok vertical:** `http://127.0.0.1:8765/overlay/tiktok` (логический canvas **1080×1920**, прозрачный фон, OBS Browser Source)
-- Query: `?scale=0.9` (масштаб только внутренних элементов, canvas фиксирован), `?preview=1` (равномерный fit-scale 9:16 в окне браузера + safe-zone guides + badge)
-- JSON API: `GET /api/arena/state` (read-only, sequence-based snapshot; `Cache-Control: no-store`)
-- Thread-safety: snapshot генерируется на server tick (`ArenaOverlayStateService`) и хранится как immutable JSON в `AtomicReference`; HTTP поток читает только готовый snapshot.
-- **`ArenaOverlayStateService.pushNow(server)`** — немедленная публикация snapshot (вызывается из `ArenaRoundHudSync.pushNow`, test-сценариев, `/arena_overlay_dump`); во время BATTLE дополнительно не чаще **4 раз/с** (250 ms).
-- Snapshot строится из **`getCurrentRoundCountries()`** + active + eliminated (стабильный порядок по `baseSlot`); не зависит от client HUD mode.
-- Static assets: `overlay/{index.html,style.css,app.js}` + `overlay/tiktok/{index.html,tiktok.css,tiktok.js}` + `overlay/flags/*.svg`
-- TikTok layout: холст 1080×1920; две колонки отдельных карточек (~312×68), без сплошных боковых панелей; верхний блок brand/фаза/таймер/СТРАН; event banners по центру; OBS transparent; preview fit-scale + guides.
-- TikTok DOM: стабильные карточки по `country.id` (`cardById`); poll 250 ms обновляет только текст/HP/status/классы; флаги — **PNG 256×160** в `overlay/tiktok/flags/` через `background-image` на `.country-flag` (не SVG `<img>`); preload один раз; `?debug=1` — cardsCreated / snapshotsUpdated / flagAssetAssignments / flagFormat=PNG. HTTP отдаёт PNG как `image/png` с `Cache-Control: max-age=86400`.
-- **SVG/CEF flicker устранён:** PNG `background-image` полностью убрал мерцание флагов в TikTok LIVE Studio (подтверждено вручную через HTTPS Cloudflare Tunnel, источник 1080×1920, прозрачный browser overlay).
-- CSS vars: `--safe-top/right/bottom/left`, `--panel-width`, `--row-height`, `--overlay-scale`.
-- SVG-флаги: 20 оригинальных файлов `flag-icons` + лицензия `overlay/licenses/flag-icons-LICENSE.txt`.
-- JS: относительный `/api/arena/state`, poll **250 ms**, пустые состояния «Раунд не начат» / «Нет соединения».
+- **Overlay-only HTTP:** `127.0.0.1:8766` (`ArenaOverlayHttpServer`) — whitelist: `/overlay/**`, `/arena/health`, `/arena/overlay-state`, `/api/arena/state`. Gift/chat **нет**.
+- **StreamToEarn HTTP:** отдельно `127.0.0.1:8765` — только health + gift/chat при `s2e_http_enabled` + token.
+- Desktop preview: `http://127.0.0.1:8766/overlay`
+- **TikTok vertical (бесплатно, без домена):** `http://127.0.0.1:8766/overlay/tiktok` (логический canvas **1080×1920**, прозрачный фон) — TikTok LIVE Studio / OBS Browser Source **на том же ПК**.
+- TikTok UI (компактный стрим-HUD): одна верхняя полоса — фаза + таймер «ДО КОНЦА» + число стран; по бокам плотные однострочные карточки (флаг, код, **БОЙЦЫ**, **РЕЗЕРВ**, короткий статус ЩИТ/ОТКР/с/OUT); центр и низ свободны под картинку эфира; HP-полоски убраны с карточек. Без домена/Cloudflare.
+- Cloudflare Named Tunnel / покупка домена **не используются**. Ключи `overlay_public_*` по умолчанию выключены.
+- Копирование URL: `tools/overlay-setup/CopyLocalOverlayUrl.cmd`; daily: `START_ARENA.cmd`.
+- Query: `?scale=0.9`, `?preview=1` (fit-scale + guides + connection status)
+- JSON API: `GET /arena/overlay-state` и alias `GET /api/arena/state` (`Cache-Control: no-store`, `X-Content-Type-Options: nosniff`)
+- Thread-safety: snapshot на server tick (`ArenaOverlayStateService`) → immutable JSON; HTTP читает только snapshot.
+- **`ArenaOverlayStateService.pushNow(server)`** — немедленная публикация; в BATTLE не чаще **4 раз/с**.
+- Static assets: один набор `overlay/` + `overlay/tiktok/` (не дублируется по портам).
+- TikTok DOM: стабильные карточки (`cardById`); PNG flags; reconnect: один `pollOnce`, AbortController, backoff ≤10s, `lastSuccessfulData`.
+- Команды: `/arena_overlay_status` (без token), `/arena_overlay_restart`, `/arena_overlay_dump`.
+- Unit-тесты: PublicUrl / HttpServer whitelist / ReconnectScript — **10 PASS**.
 - Сценарий: `/arena_test_scenario overlay_tiktok_test`.
 
 ## 16. Проверенные функции
@@ -453,10 +467,10 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - крупные world-space маркеры баз (`ArenaBaseMarkerRenderer`, HD 256×160) — **подтверждено в Minecraft** (видны с большого расстояния);
 - фонари больше не выпадают при атаке ядра — **подтверждено в Minecraft**;
 - **`/arena_test_scenario full_country_lifecycle` — полностью проверен в Minecraft:** `FULL COUNTRY LIFECYCLE: PASS`; стадии 1–7 PASS (PROTECTED, LAST DEFENDER, CORE ATTACK, RESCUE, ELIMINATION, ROUND CONTINUES, WINNER); `overlayRescueSeen=true`; `overlayEliminatedSeen=true`; победитель RU; UA и KZ выбыли; автозавершение PASS без тройного spam очереди UA.
-- **TikTok overlay PNG flags — подтверждено в TikTok LIVE Studio** (HTTPS Cloudflare Tunnel): мерцание SVG/CEF полностью исчезло; текст/HP/статусы/PNG-флаги стабильны; прозрачный browser source 1080×1920 работает.
+- **TikTok overlay PNG flags — подтверждено в TikTok LIVE Studio**: мерцание SVG/CEF полностью исчезло; текст/HP/статусы/PNG-флаги стабильны; прозрачный browser source 1080×1920 работает (исторически через tunnel; текущий бесплатный путь — локальный `127.0.0.1:8766`).
 - **Полный массовый бой 1000×1000 — подтверждён вручную в Minecraft** (`/arena_round_reset` + `/arena_gift ru 1000` + `/arena_gift ua 1000`): волны резерва, выход с баз, rally → melee, приемлемая производительность, атака ядер, rescue/elimination, завершение с победителем.
 
-Сборка `gradlew.bat build` доведена до **BUILD SUCCESSFUL** (29.07, StreamToEarn audit stage 1).
+Сборка `gradlew.bat clean build` доведена до **BUILD SUCCESSFUL** (30.07, medieval glaive visual rewrite).
 
 ---
 
@@ -465,7 +479,6 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 Не предлагать без прямого запроса пользователя:
 
 - полноценные скины четырёх фракций / формации как ближайший этап;
-- собственные модели оружия;
 - дополнительные массовые VFX сверх уже усиленных ульт ELITE/CHAMPION/TITAN;
 - StreamToEarn / TikTok API / внешний HTTP-WebSocket вход подарков как ближайший этап.
 
@@ -473,7 +486,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ## 18. Текущий фокус
 
-Разработка и улучшение самой игры Arena of Nations; начат аудит/подготовка StreamToEarn (этап 1). Реальный TikTok-эфир ещё не подключался.
+Разработка и улучшение самой игры Arena of Nations (визуал стран/бойцов). StreamToEarn audit stage 1 выполнен по коду; реальный TikTok-эфир ещё не подключался.
 
 ---
 
@@ -518,11 +531,26 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 35. **TikTok cards readability pass (29.07)** — отдельные полупрозрачные карточки; 2 строки; акценты статусов; крупнее header/таймер; event banners. Canvas/API/poll не менялись.
 36. **TikTok card status layout fix (29.07)** — grid `FLAG|CODE|БОЙ|РЕЗ|STATUS` с фиксированной зоной статуса ~96–105px без ellipsis; `БОЙ N` / `РЕЗ N` с пробелом; rescue badge `Nс`. Проверено сборкой; browser/OBS — ручная проверка.
 37. **Combat spectacle pass (29.07)** — `ArenaCombatSpectacle`: усиленные swing/hit/death/core particles+sounds для стрим-дистанции; клиент SCOUT получает attack VFX (`CRIT` + cue к цели). Урон/AI/cooldown не трогались. Проверено **BUILD SUCCESSFUL**; in-game — duel / `melee_contact` / удар по ядру.
-38. **Opposite-base march fix (29.07)** — **причина idle:** living search **80** < дистанция противоположных spawn (~**94–104**); оба ядра protected → `navigation.stop()`, melee goal без цели не двигается. **Фикс:** `rallyTowardEnemyFront` (mid-field ~центр+12, без урона по protected); living search через AABB; приоритет living→unprotected core→rally. Wave size/interval **10/40** без бага. Сценарий `mass_duel_reserve`. Диагностика в `/arena_ai_status`. Проверено **BUILD SUCCESSFUL**; in-game — `mass_duel_reserve` + ручной gift 1000/1000.
-39. **TikTok overlay flag flicker fix (29.07)** — стабильный DOM (`cardById`); одного DOM было недостаточно: SVG всё ещё мерцал в TikTok LIVE Studio/CEF.
-40. **TikTok overlay PNG flags (29.07)** — флаги карточек: PNG **256×160** (`overlay/tiktok/flags/`, копия `flags_hd`) через `div.country-flag` + `background-image` один раз; без filter на флаге; ВЫБЫЛА через `::after` overlay; HTTP `image/png` + cache. Stable DOM сохранён. **Подтверждено в TikTok LIVE Studio** (Cloudflare Tunnel HTTPS, 1080×1920): мерцание полностью исчезло; текст/HP/статусы/флаги стабильны.
-41. **Mass duel 1000×1000 manual PASS (29.07)** — gift RU/UA 1000: волны, rally, melee, ядра, rescue/elimination, победитель; производительность приемлемая. **Подтверждено в Minecraft.**
-42. **StreamToEarn audit stage 1 (29.07)** — карта пути S2E→HTTP→Commands→ViewerEventManager(queue)→server tick→handleGift; dedup по eventId; **без rate limit**; 1 coin = 1 Боец; выбор страны через chat `!id`. Улучшен `/arena_s2e_status`; сценарий `s2e_local_gift`; `s2e_bridge` считает living+reserve. Реальный эфир не подключался. Проверено **BUILD SUCCESSFUL**.
+38. **Opposite-base march fix (29.07)** — living search 80 < дистанция противоположных spawn; добавлен `rallyTowardEnemyFront`.
+39. **TikTok overlay flag flicker fix (29.07)** — стабильный DOM (`cardById`).
+40. **TikTok overlay PNG flags (29.07)** — PNG 256×160 через `background-image`; мерцание CEF устранено (**TikTok LIVE Studio PASS**).
+41. **Mass duel 1000×1000 manual PASS (29.07)** — gift RU/UA 1000 подтверждён в Minecraft.
+42. **StreamToEarn audit stage 1 (29.07)** — карта пути S2E→gift; `/arena_s2e_status`; `s2e_local_gift`. Реальный эфир не подключался.
+43. **Base flag lifecycle + shared skin/cape + fighter flag flicker (29.07)** — `ArenaBaseFlagVisibility`; shared skin; overhead flag z-fight/hysteresis fix. In-game: base flags/lifecycle ок; **плащ был кривой/без цвета** → п.44.
+44. **Cape body-attach + tint fix (29.07)** — **геометрия:** root `PlayerModel.cloak` у pivot модели (ноги) без body transform / без vanilla Y-180 → плоскость сквозь торс. **Цвет:** надёжный tint через явный `VertexConsumer.setColor(0–255)` на quads + white `cape_mask.png` (не ModelPart ARGB + white_pixel на cloak UV). Плащ: `body.translateAndRotate` + offset за спиной + лёгкий X hang; layers=1; vanilla cloak hidden. `/arena_visual_status` + client nearest/last cape diag. Проверено **BUILD SUCCESSFUL**; in-game — `/arena_test_scenario melee_contact` (RU/UA цвета, поворот с телом).
+45. **Base flag pathing/rebuild pass (30.07)** — проверен активный путь больших флагов: только `ArenaBaseMarkerRenderer` (client billboard), не entity/blocks; расширен `/arena_visual_status` (`baseFlagExpected/baseFlagEntityExists/baseFlagVisible/baseFlagUUID/duplicates`, spawn/floor/exit/rally). Малые флаги бойцов — один render path сохранён. Исправлена «траншея» у выхода баз: в `ArenaCoreBuilder` убран slab-бордюр (полные блоки) + добавлен плоский коридор 5 блоков шириной с 3-блочным клиренсом к центру. Добавлен safe rebuild `/arena_rebuild confirm` (стоп раунда, очистка только footprint арены, запуск новой сборки без сброса очков/S2E). Добавлены сценарии `base_flag_lifecycle` и `base_exit_pathing`. Build version повышен до **2**. Проверено **BUILD SUCCESSFUL**; Minecraft-тесты требуются вручную.
+46. **Fortress trench root-fix (30.07)** — найдена первопричина: `clearFortressVolume` очищал пол вокруг крепости, но часть площади не заполнялась обратно, из-за чего появлялся кольцевой провал/«траншея». Добавлен `refillFortressApron` (плоский `SMOOTH_STONE` на уровне footing по периметру крепости перед сборкой башен/ворот). Проверено **BUILD SUCCESSFUL**; нужно вручную подтвердить в Minecraft после `/arena_rebuild confirm`.
+47. **Shared medieval skin + cape removal + spear visual (30.07)** — выбран единый resource id `arena_of_nations:textures/entity/fighter/medieval_soldier.png` (wide Steve/4px arms). Автоскачивание оригинального PNG с PlanetMinecraft заблокировано Cloudflare вне интерактивной сессии: в проект не добавлен заменяющий PNG, требуется ручное размещение оригинала по пути `src/main/resources/assets/arena_of_nations/textures/entity/fighter/medieval_soldier.png`. Добавлен `CREDITS.md` (Mullraugh + source + permission). Полностью удалён активный путь плаща: слой, маска и cape-диагностика цвета. Визуальный `trident` заменён на `arena_of_nations:medieval_spear` (custom item + item model), привязка в правой руке через `ArenaFighterHeldItemLayer`; механика боя не менялась. Проверено **BUILD SUCCESSFUL**; требуется ручная проверка в Minecraft (скин/UV/копьё в руке/FPS).
+48. **Steve fallback root-cause + spear render-path hardening (30.07)** — причина Steve в Minecraft: файла `textures/entity/fighter/medieval_soldier.png` нет в ресурсах, поэтому до фикса рендер молча уходил в fallback. Исправлено: активный renderer (`ArenaFighterRenderer#getTextureLocation`) теперь всегда использует `ArenaFighterVisuals.SHARED_SKIN`; `DefaultPlayerSkin/SkinManager` не применяются; добавлен одноразовый ERROR-лог при отсутствии PNG и расширена `/arena_visual_status_client` (renderer/model/active texture/existence/dimensions/weapon paths). Причина пустой руки после удаления трезубца: item-model копья была нестабильна для runtime-пути (3D json без подтверждённого `layer0`-текстурного ресурса). Исправлено: `item/medieval_spear` + `textures/item/medieval_spear.png` (16x16 PNG, в jar) + `weapon_mode=ITEM_STACK`, `itemInHandLayerRegistered=true`, `active_weapon_render_paths=1`. Проверено `clean build` и проверкой jar: `models/item/medieval_spear.json` и `textures/item/medieval_spear.png` присутствуют; `medieval_soldier.png` в jar отсутствует до ручного добавления оригинального PNG.
+49. **Medieval glaive visual rewrite (30.07)** — старое оружие выглядело как толстая доска/кубы: активной была плоская `item/handheld` 16×16 текстура + избыточный layer scale 1.35. Заменено на thin low-poly 3D JSON (7 cuboids: тонкое древко 0.5u, кожаная обмотка, компактная втулка, листовидный клинок из 3 сегментов + ridge) и новую texture atlas **32×32**. Display scale 0.92, layer angle -20°, layer scale 1.05 (≈70° к полу). Диагностика: `weaponVisualType=MEDIEVAL_GLAIVE`, `weaponRenderPaths=1`, `tridentRenderPaths=0`, `capeRenderLayers=0`. Механика атаки не менялась. Проверено `clean build` + jar (model+PNG decode 32×32); in-game — ручная проверка формы/угла.
+50. **Medieval soldier skin installed (30.07)** — причина purple/black бойцов: `SHARED_SKIN` указывал на `medieval_soldier.png`, файла не было в resources/jar. Добавлен валидный PNG 64×64 (подпись `89 50 4E 47…`, атлас Steve, кольчуга + красный сюрко; `CREDITS.md` — Mullraugh). Путь: `src/main/resources/assets/arena_of_nations/textures/entity/fighter/medieval_soldier.png`. Код рендера не менялся. Проверено `clean build` (**BUILD SUCCESSFUL**) + jar entry `assets/.../medieval_soldier.png` size=1863; in-game — перезапуск клиента / F3+T и визуальная проверка скинов + глефы.
+51. **Full project audit + safety fixes (30.07)** — первичный аудит ~11 мин (таймер), ~97 Java-файлов + fabric/Gradle/ресурсы/jar. **CRITICAL исправлены:** (1) CME в `ArenaCoreCombatManager.tickWindups` при kill ядра mid-windup — итерация по копии entrySet; (2) ложный победитель при одновременном expiry нескольких rescue — сначала mark eliminated для всех, потом `onCountryEliminated`. **HIGH:** освобождение base slots на eliminate/break/next-round; S2E/viewer gifts drain до rescue tick (`processQueuedEvents`); отказ JSON-полей с `|||` (injection coins). **MEDIUM:** sync queueSize/clear; stop HTTP перед clear queue; stop частично стартовавшего HttpServer. Не трогались: арена/базы/скины/копья/флаги/плащи/баланс. Overlay desktop DOM churn и `s2e_http_port` при overlay=on — оставлены. Автотестов Gradle нет. Проверено `clean build` (**BUILD SUCCESSFUL**); Minecraft не запускался.
+52. **BREAK multi-country queue promote (30.07)** — после ничьей/победы подарки в BREAK шли в `nextRoundQueue` (UA+RU ок в чате), но `tickBreak` поднимал только первую страну в WAITING/резерв; остальные навсегда оставались в очереди → HUD «Стран: 1». Исправлено: `promoteQueuedCountriesAfterBreak` после старта первой страны прогоняет остаток очереди через `handleGiftWhileWaiting` / `handleGiftWhileBattle` (вторая страна сразу вступает и запускает бой). Проверено сборкой; in-game — gift UA+RU во время перерыва.
+53. **15-min full audit + cleanup (30.07)** — аудит 15:48:19→16:03:19 (ровно 900с). CRITICAL/HIGH новых lifecycle-багов не найдено (предыдущие CME/false-winner/BREAK promote держатся). Исправлено: invalidate living-count cache после `discard`; cap `countryByViewer` (5000 LRU) + удалён мёртвый `nameByViewer`; сценарий `/arena_test_scenario break_multi_country_queue` (UA+RU / RU+UA / repeat / 3 страны / single / reset mid-BREAK); lang `en_us`/`ru_ru`; удалены Example mixins, `RuScoutModel`+`ru_scout.png`, cape helpers в palette, пустой client mixins. Не трогались арена/скины/копья/флаги/плащи/баланс/TikTok design. `clean build` **BUILD SUCCESSFUL**; Gradle tests NO-SOURCE; Minecraft не запускался.
+54. **Stable overlay HTTP split (30.07)** — overlay-only HTTP `127.0.0.1:8766` (`ArenaOverlayHttpServer`, whitelist) отделён от S2E `8765`; общие handlers `ArenaOverlayHttpIO`; config `overlay_http_*` + optional `overlay_public_*` (default off); TikTok JS reconnect/backoff/AbortController + lastSuccessfulData; `START_ARENA.cmd`. Unit-тесты PublicUrl/HttpServer/ReconnectScript — **10 PASS**.
+55. **Remove paid overlay path (30.07)** — удалён мастер Named Cloudflare Tunnel (`ArenaOverlaySetup.*`); убраны проверки службы cloudflared из `START_ARENA.cmd`; основной путь — бесплатный локальный URL `http://127.0.0.1:8766/overlay/tiktok` + `CopyLocalOverlayUrl.cmd` / README без домена. Java/ресурсы не менялись (сборка не требовалась).
+56. **TikTok compact stream HUD (30.07)** — переработан `overlay/tiktok`: прозрачный 9:16 HUD; шапка «фаза · ДО КОНЦА mm:ss · N стран»; карточки одной строкой (флаг/код/бойцы/резерв/статус); HP-полоски убраны; до 20 стран (10+10) без перекрытия центра. Проверено `clean build`.
+57. **OBS blank overlay fix (30.07)** — авто-fit 1080×1920 в любой размер Browser Source; HTML/CSS/JS `Cache-Control: no-store` (флаги PNG кэшируются); стартовая надпись «Загрузка…»; инструкция OBS в `tools/overlay-setup`. Проверено сборкой.
 
 Заменено ранее:
 
@@ -530,7 +558,13 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - custom трёхфазная атака → vanilla swing + `updateSwingTime`;
 - name tags → флаги + HP;
 - BossBar как основной UI → client round HUD (BossBar debug-only);
-- «ВЫБЫЛА при coreHP≤0» / «донат обязателен при живых бойцах» → variant C.
+- «ВЫБЫЛА при coreHP≤0» / «донат обязателен при живых бойцах» → variant C;
+- per-country fighter skins в live-path → один shared skin + цветной плащ;
+- base markers показывали eliminated как «ВЫБЫЛА» → скрытие после elimination;
+- root PlayerModel.cloak как плащ → body-attached tinted cape quads.
+- slab-бордюр/неровный выход у spawn zone → плоский полно-блочный коридор выхода от базы к центру;
+- плоский толстый `item/handheld` spear sprite → thin low-poly medieval glaive (JSON cuboids + 32×32 atlas);
+- отсутствующий `medieval_soldier.png` (purple missing texture) → установленный 64×64 shared skin в jar.
 
 ---
 

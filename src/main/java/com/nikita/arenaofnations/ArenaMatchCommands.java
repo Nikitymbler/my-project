@@ -17,9 +17,11 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 
 final class ArenaMatchCommands {
 	private ArenaMatchCommands() {
@@ -144,11 +146,79 @@ final class ArenaMatchCommands {
 				.append(" UA=").append(match.getReserveSize(Country.UA));
 		report.append('\n').append("living RU=").append(match.countLivingFighters(level, Country.RU))
 				.append(" UA=").append(match.countLivingFighters(level, Country.UA));
+		AiSpawnMetrics metrics = collectSpawnMetrics(level, match);
+		report.append('\n').append("fighters inside spawn zone=").append(metrics.insideSpawnZones);
+		report.append('\n').append("fighters below expected floor=").append(metrics.belowFloor);
+		report.append('\n').append("fighters with no path=").append(metrics.noPath);
+		report.append('\n').append("fighters moving to rally=").append(metrics.movingToRally);
+		report.append('\n').append("spawn distance avg=")
+				.append(String.format(java.util.Locale.ROOT, "%.2f", metrics.averageDistance))
+				.append(" min=")
+				.append(String.format(java.util.Locale.ROOT, "%.2f", metrics.minDistance));
 		if (ArenaMassDuelReserveTest.get().isRunning()) {
 			report.append('\n').append(ArenaMassDuelReserveTest.get().statusReport(context.getSource().getServer()));
 		}
 		context.getSource().sendSuccess(() -> Component.literal(report.toString()), false);
 		return 1;
+	}
+
+	private static AiSpawnMetrics collectSpawnMetrics(ServerLevel level, ArenaMatchManager match) {
+		AiSpawnMetrics metrics = new AiSpawnMetrics();
+		if (match.getMatchCenter().equals(net.minecraft.world.phys.Vec3.ZERO)) {
+			return metrics;
+		}
+		BlockPos center = BlockPos.containing(match.getMatchCenter());
+		double sum = 0.0D;
+		double min = Double.MAX_VALUE;
+
+		for (Entity entity : level.getAllEntities()) {
+			if (!(entity instanceof ArenaFighterEntity fighter)
+					|| !fighter.isAlive()
+					|| !FighterFactory.isArenaFighter(fighter)) {
+				continue;
+			}
+			Country country = fighter.getArenaCountry();
+			int slot = country == null ? -1 : match.getBaseSlot(country);
+			if (slot < 0) {
+				continue;
+			}
+
+			BlockPos spawnCenter = ArenaCountryBaseLayout.spawnZoneCenter(center, slot);
+			double distFromSpawn = Math.sqrt(spawnCenter.distSqr(fighter.blockPosition()));
+			sum += distFromSpawn;
+			min = Math.min(min, distFromSpawn);
+			metrics.counted++;
+			if (distFromSpawn <= 7.0D) {
+				metrics.insideSpawnZones++;
+			}
+
+			int expectedFloor = spawnCenter.getY() - 1;
+			if (fighter.getY() < expectedFloor - 0.2D) {
+				metrics.belowFloor++;
+			}
+
+			if (ArenaCoreCombatManager.get().isRallyOnly(fighter.getUUID())) {
+				metrics.movingToRally++;
+			}
+
+			boolean hasPath = fighter.getNavigation().isInProgress() && !fighter.getNavigation().isDone();
+			if (!hasPath && fighter.getTarget() == null) {
+				metrics.noPath++;
+			}
+		}
+		metrics.averageDistance = metrics.counted > 0 ? (sum / metrics.counted) : 0.0D;
+		metrics.minDistance = metrics.counted > 0 ? min : 0.0D;
+		return metrics;
+	}
+
+	private static final class AiSpawnMetrics {
+		int counted;
+		int insideSpawnZones;
+		int belowFloor;
+		int noPath;
+		int movingToRally;
+		double averageDistance;
+		double minDistance;
 	}
 
 	private static int classStatusCommand(CommandContext<CommandSourceStack> context) {

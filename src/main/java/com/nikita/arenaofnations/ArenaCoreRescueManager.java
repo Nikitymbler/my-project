@@ -209,8 +209,17 @@ public final class ArenaCoreRescueManager {
 			}
 		}
 
+		// Mark every same-tick expiry eliminated before match callbacks, so multi-expiry
+		// does not briefly treat another expiring country as the sole remaining winner.
+		List<Country> toEliminate = new ArrayList<>();
 		for (Country country : expired) {
-			expireRescue(server, country);
+			if (markRescueExpired(server, country)) {
+				toEliminate.add(country);
+			}
+		}
+		for (Country country : toEliminate) {
+			ArenaMatchManager.get().onCountryEliminated(server, country);
+			ArenaRoundHudSync.pushNow(server);
 		}
 	}
 
@@ -295,21 +304,26 @@ public final class ArenaCoreRescueManager {
 		}
 	}
 
-	private void expireRescue(MinecraftServer server, Country country) {
+	/**
+	 * Marks a rescue expiry as final elimination without notifying the match yet.
+	 *
+	 * @return {@code true} if the country was marked eliminated and needs {@code onCountryEliminated}
+	 */
+	private boolean markRescueExpired(MinecraftServer server, Country country) {
 		RescueState state = states.get(country);
 		if (state == null || state.expireHandled || state.eliminated || !state.rescuing) {
-			return;
+			return false;
 		}
 		if (state.startedGeneration != generation) {
 			clearCountdown(state);
-			return;
+			return false;
 		}
 
 		// Final gate: gift/fighter may have arrived same tick.
 		if (!isCoreDown(country) || ArenaMatchManager.get().getLiveFighterCount(server, country) > 0) {
 			clearCountdown(state);
 			ArenaRoundHudSync.pushNow(server);
-			return;
+			return false;
 		}
 
 		state.expireHandled = true;
@@ -323,9 +337,15 @@ public final class ArenaCoreRescueManager {
 				"✖ " + country.getDisplayName() + " выбыла из раунда!");
 		broadcast(server, eliminatedMessage);
 		broadcastActionBar(server, eliminatedMessage);
+		return true;
+	}
 
-		ArenaMatchManager.get().onCountryEliminated(server, country);
-		ArenaRoundHudSync.pushNow(server);
+	/** Test / forced path: expire one country immediately. */
+	private void expireRescue(MinecraftServer server, Country country) {
+		if (markRescueExpired(server, country)) {
+			ArenaMatchManager.get().onCountryEliminated(server, country);
+			ArenaRoundHudSync.pushNow(server);
+		}
 	}
 
 	public String buildRescueStatusText(MinecraftServer server) {

@@ -11,11 +11,15 @@
     <div id="stage">
       <div id="stage-inner">
         <header id="header">
-          <div id="brand">ARENA OF NATIONS</div>
-          <div id="phase">ОЖИДАНИЕ</div>
-          <div id="timer">00:00</div>
-          <div id="remaining">СТРАН: 0</div>
-          <div id="status-note" class="hidden">Нет соединения</div>
+          <div id="hud-bar">
+            <div id="phase">ОЖИДАНИЕ</div>
+            <div id="timer-block">
+              <div id="timer-label">ДО КОНЦА</div>
+              <div id="timer">00:00</div>
+            </div>
+            <div id="remaining">0 стран</div>
+          </div>
+          <div id="status-note">Загрузка…</div>
         </header>
 
         <div id="columns">
@@ -31,9 +35,10 @@
       <div id="left-guide" class="preview-only"></div>
       <div id="right-guide" class="preview-only"></div>
       <div id="bottom-guide" class="preview-only"></div>
-      <div id="preview-badge" class="preview-only">1080 × 1920 · 9:16 PREVIEW</div>
+      <div id="preview-badge" class="preview-only">1080 × 1920 · TikTok</div>
     </div>
   </div>
+  <div id="connection-status" class="connection-status hidden" aria-live="polite">ONLINE</div>
   <script src="/overlay/tiktok/tiktok.js"></script>
 </body>
 </html>

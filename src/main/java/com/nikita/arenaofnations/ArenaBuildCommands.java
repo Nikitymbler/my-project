@@ -46,12 +46,19 @@ final class ArenaBuildCommands {
 				.requires(source -> source.hasPermission(2))
 				.executes(context -> clearConfirm(context.getSource())));
 		dispatcher.register(clear);
+
+		LiteralArgumentBuilder<CommandSourceStack> rebuild = Commands.literal("arena_rebuild");
+		rebuild.executes(context -> rebuildHelp(context.getSource()));
+		rebuild.then(Commands.literal("confirm")
+				.requires(source -> source.hasPermission(2))
+				.executes(context -> rebuildConfirm(context.getSource())));
+		dispatcher.register(rebuild);
 	}
 
 	private static int buildHelp(CommandSourceStack source) {
 		source.sendSuccess(() -> Component.literal(
 				"Команда изменит блоки в радиусе " + ArenaCountryBaseLayout.CLEAR_RADIUS
-						+ " блоков и построит арену v3.\n"
+						+ " блоков и построит арену актуальной версии.\n"
 						+ "Для подтверждения используйте /arena_build confirm"), false);
 		return Command.SINGLE_SUCCESS;
 	}
@@ -187,6 +194,64 @@ final class ArenaBuildCommands {
 		int finalCleared = cleared;
 		source.sendSuccess(() -> Component.literal(
 				"Арена очищена (блоков/сущностей: " + finalCleared + "). Сохранённая настройка сброшена."), false);
+		return Command.SINGLE_SUCCESS;
+	}
+
+	private static int rebuildHelp(CommandSourceStack source) {
+		source.sendSuccess(() -> Component.literal(
+				"Безопасная перестройка арены:\n"
+						+ "1) остановка текущего раунда,\n"
+						+ "2) очистка объектов/блоков только в footprint арены,\n"
+						+ "3) запуск строительства новой версии.\n"
+						+ "Подтверждение: /arena_rebuild confirm"), false);
+		return Command.SINGLE_SUCCESS;
+	}
+
+	private static int rebuildConfirm(CommandSourceStack source) throws CommandSyntaxException {
+		if (ArenaBuildManager.isBuilding()) {
+			source.sendFailure(Component.literal("Сейчас уже идёт строительство. Дождитесь /arena_build_status."));
+			return 0;
+		}
+
+		ServerPlayer player = source.getPlayerOrException();
+		var server = source.getServer();
+		ArenaSetupSavedData setup = ArenaSetupSavedData.get(server);
+		if (setup == null) {
+			source.sendFailure(Component.literal("Хранилище настройки арены недоступно."));
+			return 0;
+		}
+
+		// Stop active round/test state; does not reset global country scores.
+		ArenaTestScenarioCommands.cancelDeferred();
+		ArenaMatchManager.get().reset(server);
+		ArenaCoreCombatManager.get().clearAll(server);
+		ArenaCoreRescueManager.get().clearAll();
+		ArenaHudManager.get().clearAll(server);
+
+		int cleared = 0;
+		if (setup.isConfigured()) {
+			ServerLevel previousLevel = ArenaBuildManager.resolveArenaLevel(server);
+			if (previousLevel != null) {
+				cleared = ArenaRegionClear.clearArena(previousLevel, setup.getCenter());
+			}
+		}
+		setup.clearSetup();
+
+		BlockPos standing = player.blockPosition().below();
+		if (!player.serverLevel().getBlockState(standing).blocksMotion()) {
+			standing = player.blockPosition();
+		}
+
+		String error = ArenaBuildManager.startBuild(server, player, standing);
+		if (error != null) {
+			source.sendFailure(Component.literal("Rebuild aborted: " + error));
+			return 0;
+		}
+
+		int finalCleared = cleared;
+		source.sendSuccess(() -> Component.literal(
+				"Перестройка арены запущена. Очищено объектов/блоков в footprint: " + finalCleared
+						+ ". Следите: /arena_build_status"), false);
 		return Command.SINGLE_SUCCESS;
 	}
 }

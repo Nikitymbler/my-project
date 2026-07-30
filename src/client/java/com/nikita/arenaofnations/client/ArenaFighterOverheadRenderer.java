@@ -22,6 +22,7 @@ import net.minecraft.world.entity.player.Player;
 
 /**
  * Draws country flag + optional health bar above arena fighters.
+ * Single render path (called only from {@link ArenaFighterRenderer}).
  * Billboarded to the camera; uses depth-tested entity render types (not see-through).
  */
 public final class ArenaFighterOverheadRenderer {
@@ -37,6 +38,11 @@ public final class ArenaFighterOverheadRenderer {
 	private static final float BAR_HEIGHT = 4.0F;
 	private static final float BAR_BORDER = 1.0F;
 
+	/** Depth offsets to prevent z-fighting between border / flag / HP. */
+	private static final float Z_BORDER = -0.02F;
+	private static final float Z_FLAG = 0.0F;
+	private static final float Z_HP = 0.03F;
+
 	private ArenaFighterOverheadRenderer() {
 	}
 
@@ -50,6 +56,7 @@ public final class ArenaFighterOverheadRenderer {
 			return;
 		}
 		if (!entity.isAlive() || entity.isRemoved()) {
+			ArenaFighterFlagVisuals.recordHideReason(ArenaFighterFlagVisuals.HIDE_DEAD);
 			return;
 		}
 
@@ -62,14 +69,16 @@ public final class ArenaFighterOverheadRenderer {
 			return;
 		}
 		if (entity.isInvisibleTo(localPlayer)) {
+			ArenaFighterFlagVisuals.recordHideReason(ArenaFighterFlagVisuals.HIDE_INVISIBLE);
 			return;
 		}
 
 		double distSqr = dispatcher.distanceToSqr(entity);
-		if (distSqr > ArenaFighterFlagVisuals.SHOW_FLAG_DIST_SQR) {
+		if (!ArenaFighterFlagVisuals.shouldShowFlag(entity, distSqr)) {
 			return;
 		}
-		boolean showHealth = distSqr <= ArenaFighterFlagVisuals.SHOW_HEALTH_DIST_SQR;
+		boolean showHealth = ArenaFighterFlagVisuals.shouldShowHealth(entity, distSqr);
+		ArenaFighterFlagVisuals.recordHideReason(ArenaFighterFlagVisuals.HIDE_NONE);
 
 		float scale = ArenaFighterFlagVisuals.billboardScale(entity);
 		float indicatorY = ArenaFighterFlagVisuals.indicatorY(entity);
@@ -78,7 +87,6 @@ public final class ArenaFighterOverheadRenderer {
 
 		ResourceLocation flagTexture = ArenaFighterFlagVisuals.flagTexture(entity);
 		boolean fallback = flagTexture.equals(ArenaFighterFlagVisuals.FALLBACK_TEXTURE);
-		// Fallback wool tinted magenta so missing resources are obvious.
 		int flagTintR = 255;
 		int flagTintG = fallback ? 0 : 255;
 		int flagTintB = fallback ? 255 : 255;
@@ -91,17 +99,39 @@ public final class ArenaFighterOverheadRenderer {
 		int light = LightTexture.FULL_BRIGHT;
 		int overlay = OverlayTexture.NO_OVERLAY;
 
-		// Flag only — no opaque black backing plate (that was covering the texture).
 		PoseStack.Pose pose = poseStack.last();
-		// Thin dark border around the flag quad.
+		// Thin dark border BEHIND the flag (negative Z) — avoids z-fighting flicker.
 		RenderType borderType = RenderType.entityTranslucent(ArenaFighterFlagVisuals.WHITE_PIXEL);
 		VertexConsumer borderConsumer = buffer.getBuffer(borderType);
 		float border = 0.6F;
-		drawColoredQuad(pose, borderConsumer, -halfW - border, -halfH - border, halfW + border, halfH + border, 0.0F, 15, 15, 15, 180);
+		drawColoredQuad(
+				pose,
+				borderConsumer,
+				-halfW - border,
+				-halfH - border,
+				halfW + border,
+				halfH + border,
+				Z_BORDER,
+				15,
+				15,
+				15,
+				180);
 
 		RenderType flagType = RenderType.entityCutoutNoCull(flagTexture);
 		VertexConsumer flagConsumer = buffer.getBuffer(flagType);
-		blitFlagQuad(poseStack, flagConsumer, -halfW, -halfH, halfW, halfH, flagTintR, flagTintG, flagTintB, light, overlay);
+		blitFlagQuad(
+				poseStack,
+				flagConsumer,
+				-halfW,
+				-halfH,
+				halfW,
+				halfH,
+				Z_FLAG,
+				flagTintR,
+				flagTintG,
+				flagTintB,
+				light,
+				overlay);
 
 		if (showHealth) {
 			renderHealthBar(entity, poseStack, buffer, distSqr);
@@ -112,7 +142,7 @@ public final class ArenaFighterOverheadRenderer {
 			float health = entity.getHealth();
 			float healthFraction = maxHealth > 0.0F ? Mth.clamp(health / maxHealth, 0.0F, 1.0F) : 0.0F;
 			ArenaOfNations.LOGGER.info(
-					"ArenaFighterOverheadRenderer: first draw — country={}, texture={}, renderType={}, scale={}, indicatorY={}, half={}x{}, distSqr={}, showHealth={}, health={}/{}, fraction={}",
+					"ArenaFighterOverheadRenderer: first draw — country={}, texture={}, renderType={}, scale={}, indicatorY={}, half={}x{}, distSqr={}, showHealth={}, health={}/{}, fraction={}, paths={}",
 					entity.getArenaCountry(),
 					flagTexture,
 					flagType,
@@ -124,7 +154,8 @@ public final class ArenaFighterOverheadRenderer {
 					showHealth,
 					health,
 					maxHealth,
-					healthFraction);
+					healthFraction,
+					ArenaFighterFlagVisuals.FIGHTER_FLAG_RENDER_PATH_COUNT);
 			ArenaFighterFlagVisuals.logOnce(entity, flagTexture, scale, indicatorY);
 		}
 
@@ -132,8 +163,7 @@ public final class ArenaFighterOverheadRenderer {
 	}
 
 	/**
-	 * Textured flag quad with normalized UVs:
-	 * bottom-left (0,1), bottom-right (1,1), top-right (1,0), top-left (0,0).
+	 * Textured flag quad with normalized UVs.
 	 * Local Y grows downward after scale(-s,-s,s); top of flag is -halfH.
 	 */
 	private static void blitFlagQuad(
@@ -143,26 +173,22 @@ public final class ArenaFighterOverheadRenderer {
 			float top,
 			float right,
 			float bottom,
+			float z,
 			int r,
 			int g,
 			int b,
 			int light,
 			int overlay) {
 		PoseStack.Pose pose = poseStack.last();
-		float z = 0.0F;
-		// bottom-left
 		vertex(consumer, pose, left, bottom, z, 0.0F, 1.0F, r, g, b, 255, light, overlay);
-		// bottom-right
 		vertex(consumer, pose, right, bottom, z, 1.0F, 1.0F, r, g, b, 255, light, overlay);
-		// top-right
 		vertex(consumer, pose, right, top, z, 1.0F, 0.0F, r, g, b, 255, light, overlay);
-		// top-left
 		vertex(consumer, pose, left, top, z, 0.0F, 0.0F, r, g, b, 255, light, overlay);
 	}
 
 	/**
 	 * HP under the flag. Flag bottom is +FLAG_HALF_HEIGHT in local space; bar uses larger +Y.
-	 * Frame / fill / empty are non-overlapping quads (no shared-plane z-fighting).
+	 * Drawn at Z_HP so it does not z-fight with the flag plane.
 	 */
 	private static void renderHealthBar(
 			ArenaFighterEntity entity,
@@ -188,15 +214,13 @@ public final class ArenaFighterOverheadRenderer {
 		VertexConsumer healthConsumer = buffer.getBuffer(healthType);
 		PoseStack.Pose pose = poseStack.last();
 
-		final float z = 0.0F;
+		final float z = Z_HP;
 
-		// Frame as four non-overlapping edges (RGBA 15,15,15,255)
 		drawColoredQuad(pose, healthConsumer, barLeft, barTop, barRight, barTop + BAR_BORDER, z, 15, 15, 15, 255);
 		drawColoredQuad(pose, healthConsumer, barLeft, barBottom - BAR_BORDER, barRight, barBottom, z, 15, 15, 15, 255);
 		drawColoredQuad(pose, healthConsumer, barLeft, innerTop, barLeft + BAR_BORDER, innerBottom, z, 15, 15, 15, 255);
 		drawColoredQuad(pose, healthConsumer, barRight - BAR_BORDER, innerTop, barRight, innerBottom, z, 15, 15, 15, 255);
 
-		// Filled health (left → fillRight)
 		if (fillRight > innerLeft) {
 			int fr;
 			int fg;
@@ -217,7 +241,6 @@ public final class ArenaFighterOverheadRenderer {
 			drawColoredQuad(pose, healthConsumer, innerLeft, innerTop, fillRight, innerBottom, z, fr, fg, fb, 255);
 		}
 
-		// Empty remainder (fillRight → innerRight), no overlap with fill
 		if (fillRight < innerRight) {
 			drawColoredQuad(pose, healthConsumer, fillRight, innerTop, innerRight, innerBottom, z, 45, 45, 45, 230);
 		}
@@ -253,7 +276,6 @@ public final class ArenaFighterOverheadRenderer {
 			int alpha) {
 		int light = LightTexture.FULL_BRIGHT;
 		int overlay = OverlayTexture.NO_OVERLAY;
-		// Same winding / UV convention as the working flag quad.
 		vertex(consumer, pose, left, bottom, z, 0.0F, 1.0F, red, green, blue, alpha, light, overlay);
 		vertex(consumer, pose, right, bottom, z, 1.0F, 1.0F, red, green, blue, alpha, light, overlay);
 		vertex(consumer, pose, right, top, z, 1.0F, 0.0F, red, green, blue, alpha, light, overlay);

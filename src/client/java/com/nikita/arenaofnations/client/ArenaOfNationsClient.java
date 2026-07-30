@@ -1,8 +1,10 @@
 package com.nikita.arenaofnations.client;
 
+import com.nikita.arenaofnations.ArenaBaseFlagVisibility;
 import com.nikita.arenaofnations.ArenaEntities;
+import com.nikita.arenaofnations.ArenaHudCountryState;
+import com.nikita.arenaofnations.ArenaHudSnapshot;
 import com.nikita.arenaofnations.ArenaOfNations;
-
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -60,6 +62,11 @@ public class ArenaOfNationsClient implements ClientModInitializer {
 						context.getSource().sendFeedback(Component.literal(ArenaBaseMarkerSettings.statusReport(entries)));
 						return 1;
 					}));
+			dispatcher.register(ClientCommandManager.literal("arena_visual_status_client")
+					.executes(context -> {
+						context.getSource().sendFeedback(Component.literal(buildClientVisualStatus()));
+						return 1;
+					}));
 		});
 
 		ResourceManagerHelper.get(PackType.CLIENT_RESOURCES).registerReloadListener(
@@ -72,7 +79,73 @@ public class ArenaOfNationsClient implements ClientModInitializer {
 					@Override
 					public void onResourceManagerReload(ResourceManager resourceManager) {
 						ArenaFighterVisuals.clearTextureCache();
+						ArenaFighterFlagVisuals.clearTextureCache();
 					}
 				});
+	}
+
+	private static String buildClientVisualStatus() {
+		ArenaFighterVisuals.ensureSkinDiagnosticsLogged();
+		ArenaFighterEquipmentVisuals.ensureWeaponDiagnosticsLogged();
+		ArenaHudSnapshot snapshot = ArenaRoundHudClient.getSnapshotIfFresh();
+		int visibleBase = 0;
+		StringBuilder countries = new StringBuilder();
+		for (ArenaHudCountryState row : snapshot.countries()) {
+			boolean show = ArenaBaseFlagVisibility.shouldShow(row);
+			if (show) {
+				visibleBase++;
+			}
+			countries.append(String.format(
+					java.util.Locale.ROOT,
+					"\n- %s participant=true eliminated=%s baseFlagVisible=%s hide=%s living=%d reserve=%d",
+					row.country().getCode(),
+					row.eliminated(),
+					show,
+					ArenaBaseFlagVisibility.hideReason(row),
+					row.aliveFighters(),
+					row.reserveCount()));
+		}
+
+		return "Arena visual status (client):\n"
+				+ "match_state=" + snapshot.state() + '\n'
+				+ "fighter_entity_type=" + ArenaFighterVisuals.FIGHTER_ENTITY_TYPE_ID + '\n'
+				+ "fighter_renderer_class=" + ArenaFighterVisuals.RENDERER_CLASS_NAME + '\n'
+				+ "fighter_model_class=" + ArenaFighterVisuals.MODEL_CLASS_NAME + '\n'
+				+ "active_texture_resource=" + ArenaFighterVisuals.sharedTexture() + '\n'
+				+ "texture_exists_in_resources=" + ArenaFighterVisuals.sharedTextureExists() + '\n'
+				+ "texture_dimensions=" + ArenaFighterVisuals.sharedTextureDimensions() + '\n'
+				+ "usingDefaultSteve=" + ArenaFighterVisuals.usingDefaultSteve() + '\n'
+				+ "usingPlayerSkinManager=" + ArenaFighterVisuals.usingPlayerSkinManager() + '\n'
+				+ "base_markers_enabled=" + ArenaBaseMarkerSettings.isEnabled() + '\n'
+				+ "base_markers_active=" + ArenaBaseMarkerSettings.lastActiveMarkers() + '\n'
+				+ "base_markers_rendered=" + ArenaBaseMarkerSettings.lastRenderedMarkers() + '\n'
+				+ "base_flag_visible_count=" + visibleBase + '\n'
+				+ "fighter_flag_render_paths=" + ArenaFighterFlagVisuals.FIGHTER_FLAG_RENDER_PATH_COUNT
+				+ " (" + ArenaFighterFlagVisuals.FIGHTER_FLAG_RENDER_PATH + ")\n"
+				+ "fighter_model=PlayerModel(wide_steve_4px_arms)\n"
+				+ "shared_skin_requested=" + ArenaFighterVisuals.sharedSkinResourceId() + '\n'
+				+ "shared_skin_resolved=" + ArenaFighterVisuals.resolvedSkinResourceId() + '\n'
+				+ "weapon_mode=" + ArenaFighterEquipmentVisuals.WEAPON_MODE + '\n'
+				+ "weaponVisualType=" + ArenaFighterEquipmentVisuals.WEAPON_VISUAL_TYPE + '\n'
+				+ "weaponRenderPaths=" + ArenaFighterEquipmentVisuals.ACTIVE_WEAPON_RENDER_PATHS + '\n'
+				+ "tridentRenderPaths=" + ArenaFighterEquipmentVisuals.TRIDENT_RENDER_PATHS + '\n'
+				+ "main_hand_item_id=" + ArenaFighterEquipmentVisuals.mainHandItemId() + '\n'
+				+ "itemInHandLayerRegistered=" + ArenaFighterHeldItemLayer.ITEM_IN_HAND_LAYER_REGISTERED + '\n'
+				+ "customWeaponLayerRegistered=" + ArenaFighterHeldItemLayer.CUSTOM_WEAPON_LAYER_REGISTERED + '\n'
+				+ "weaponModelResource=" + ArenaFighterEquipmentVisuals.SPEAR_MODEL_RESOURCE + '\n'
+				+ "weaponTextureResource=" + ArenaFighterEquipmentVisuals.SPEAR_TEXTURE_RESOURCE + '\n'
+				+ "weaponModelExists=" + ArenaFighterEquipmentVisuals.spearModelExists() + '\n'
+				+ "weaponTextureExists=" + ArenaFighterEquipmentVisuals.spearTextureExists() + '\n'
+				+ "weaponAttachedToRightArm=" + ArenaFighterEquipmentVisuals.WEAPON_ATTACHED_TO_RIGHT_ARM + '\n'
+				+ "weaponAngleDegrees=" + ArenaFighterEquipmentVisuals.WEAPON_ANGLE_DEGREES + '\n'
+				+ "weaponScale=" + ArenaFighterEquipmentVisuals.WEAPON_SCALE + '\n'
+				+ "active_weapon_render_paths=" + ArenaFighterEquipmentVisuals.ACTIVE_WEAPON_RENDER_PATHS + '\n'
+				+ "capeEnabled=false\n"
+				+ "capeRenderLayers=0\n"
+				+ "capeResourcesLoaded=0\n"
+				+ "fighter_flag_last_hide=" + ArenaFighterFlagVisuals.lastHideReasonLabel() + '\n'
+				+ "flag_show_dist=" + (int) ArenaFighterFlagVisuals.SHOW_FLAG_DIST
+				+ " hide_hysteresis=" + (int) ArenaFighterFlagVisuals.HIDE_FLAG_DIST
+				+ countries;
 	}
 }

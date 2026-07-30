@@ -70,11 +70,12 @@ public final class ArenaBaseMarkerSettings {
 			String status,
 			boolean renderedFlag,
 			boolean renderedText,
-			boolean renderedHp) {
+			boolean renderedHp,
+			String hideReason) {
 		String format() {
 			return String.format(
 					Locale.ROOT,
-					"%s tex=%s pos=%s dist=%.1f hp=%d/%d status=%s flag=%s text=%s hpBar=%s",
+					"%s tex=%s pos=%s dist=%.1f hp=%d/%d status=%s flag=%s text=%s hpBar=%s hide=%s",
 					id,
 					texture,
 					position,
@@ -84,7 +85,8 @@ public final class ArenaBaseMarkerSettings {
 					status,
 					renderedFlag ? "yes" : "no",
 					renderedText ? "yes" : "no",
-					renderedHp ? "yes" : "no");
+					renderedHp ? "yes" : "no",
+					hideReason == null ? "none" : hideReason);
 		}
 	}
 }

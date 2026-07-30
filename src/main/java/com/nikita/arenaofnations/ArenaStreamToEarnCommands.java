@@ -105,6 +105,7 @@ public final class ArenaStreamToEarnCommands {
 		builder.append("  POST /arena/gift  (header X-Arena-Token)\n");
 		builder.append("  POST /arena/streamtoearn/chat  (body-auth JSON/plain)\n");
 		builder.append("  POST /arena/streamtoearn/gift  (body-auth JSON/plain)\n");
+		builder.append("note: overlay HTTP is separate (default 127.0.0.1:8766); gift/chat are NOT on overlay port\n");
 		builder.append("received chat (ingress)=").append(acceptedChatCommands.get()).append('\n');
 		builder.append("received gift (ingress)=").append(acceptedGiftCommands.get()).append('\n');
 		builder.append("rejected (ingress)=").append(rejectedCommands.get()).append('\n');
@@ -205,6 +206,9 @@ public final class ArenaStreamToEarnCommands {
 
 		if (viewerId.isEmpty()) {
 			return AcceptResult.rejected("пустой viewerId");
+		}
+		if (viewerId.contains("|||") || eventId.contains("|||")) {
+			return AcceptResult.rejected("viewerId/eventId содержат запрещённый разделитель");
 		}
 		if (viewerId.length() > MAX_VIEWER_ID_LENGTH) {
 			return AcceptResult.rejected("viewerId длиннее " + MAX_VIEWER_ID_LENGTH + " символов");

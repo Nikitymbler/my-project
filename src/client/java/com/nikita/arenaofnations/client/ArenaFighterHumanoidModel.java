@@ -29,7 +29,6 @@ public class ArenaFighterHumanoidModel extends PlayerModel<ArenaFighterEntity> {
 		this.leftArmPose = armPoseFor(hands.offHand());
 
 		super.setupAnim(entity, limbSwing, limbSwingAmount, ageInTicks, netHeadYaw, headPitch);
-		// Do not modify rightArm after super - vanilla swing must fully own attack poses.
 	}
 
 	private static HumanoidModel.ArmPose armPoseFor(ItemStack stack) {

@@ -54,6 +54,8 @@ public class ArenaOfNations implements ModInitializer {
 
 		ArenaTeamDuel.register();
 		ArenaMatchManager.register();
+		ArenaItems.register();
+		ArenaVisualStatusCommands.register();
 	}
 
 	public static ResourceLocation id(String path) {

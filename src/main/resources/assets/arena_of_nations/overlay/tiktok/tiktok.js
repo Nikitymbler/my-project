@@ -1,5 +1,5 @@
 const POLL_MS = 250;
-const EVENT_MS = 3200;
+const EVENT_MS = 2800;
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
 /** Raster flags for CEF/TikTok LIVE Studio (copied from textures/gui/flags_hd 256×160). */
@@ -36,8 +36,8 @@ if (preview) {
 }
 
 const fitRoot = document.getElementById("fit-root");
-const brandEl = document.getElementById("brand");
 const phaseEl = document.getElementById("phase");
+const timerLabelEl = document.getElementById("timer-label");
 const timerEl = document.getElementById("timer");
 const remainingEl = document.getElementById("remaining");
 const noteEl = document.getElementById("status-note");
@@ -74,13 +74,14 @@ function preloadFlags() {
 }
 
 function updateFitScale() {
-  if (!preview || !fitRoot) {
+  if (!fitRoot) {
     return;
   }
   const availableW = Math.max(1, window.innerWidth);
   const availableH = Math.max(1, window.innerHeight);
+  // Always fit 1080×1920 canvas into the Browser Source viewport (OBS / TikTok LIVE Studio).
   const fit = Math.min(availableW / CANVAS_W, availableH / CANVAS_H);
-  document.documentElement.style.setProperty("--fit-scale", String(fit));
+  document.documentElement.style.setProperty("--fit-scale", String(fit > 0 ? fit : 1));
 }
 
 function phaseLabel(phase) {
@@ -88,9 +89,28 @@ function phaseLabel(phase) {
     case "BATTLE": return "БОЙ";
     case "WAITING_FOR_OPPONENT": return "ОЖИДАНИЕ";
     case "BREAK": return "ПЕРЕРЫВ";
-    case "IDLE": return "ЗАВЕРШЕНО";
+    case "IDLE": return "ГОТОВО";
     default: return phase || "—";
   }
+}
+
+function timerLabel(phase) {
+  switch (phase) {
+    case "BATTLE": return "ДО КОНЦА";
+    case "WAITING_FOR_OPPONENT": return "ОЖИДАНИЕ";
+    case "BREAK": return "ПЕРЕРЫВ";
+    case "IDLE": return "ВРЕМЯ";
+    default: return "ВРЕМЯ";
+  }
+}
+
+function countriesWord(n) {
+  const abs = Math.abs(n) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return "стран";
+  if (last === 1) return "страна";
+  if (last >= 2 && last <= 4) return "страны";
+  return "стран";
 }
 
 function stateClass(status) {
@@ -108,33 +128,17 @@ function statusBadge(country) {
     case "PROTECTED":
       return { text: "ЩИТ", cls: "status status-protected" };
     case "VULNERABLE":
-      return { text: "УЯЗВИМА", cls: "status status-vulnerable status-long" };
+      return { text: "ОТКР", cls: "status status-vulnerable" };
     case "RESCUE":
       return {
         text: `${country.rescueSeconds || 0}с`,
         cls: "status status-rescue",
       };
     case "ELIMINATED":
-      return { text: "ВЫБЫЛА", cls: "status status-eliminated status-long" };
+      return { text: "OUT", cls: "status status-eliminated" };
     default:
-      return { text: "?", cls: "status status-vulnerable" };
+      return { text: "—", cls: "status status-vulnerable" };
   }
-}
-
-function hpColor(country) {
-  if (country.status === "ELIMINATED" || (country.corePercent ?? 0) <= 0) {
-    return "#374151";
-  }
-  if (country.status === "RESCUE") return "#fb923c";
-  const percent = country.corePercent ?? 0;
-  if (percent > 60) return "#4ade80";
-  if (percent >= 30) return "#facc15";
-  return "#ef4444";
-}
-
-function hpPercent(country) {
-  if (country.status === "ELIMINATED") return 0;
-  return Math.max(0, Math.min(100, country.corePercent || 0));
 }
 
 /** Assign PNG background once per country id (or when id actually changes). */
@@ -154,9 +158,6 @@ function createCard(country) {
   el.className = `row ${stateClass(country.status)}`;
   el.dataset.id = country.id;
 
-  const top = document.createElement("div");
-  top.className = "row-top";
-
   const flag = document.createElement("div");
   flag.className = "country-flag";
   flag.setAttribute("role", "img");
@@ -170,40 +171,24 @@ function createCard(country) {
   live.className = "stat stat-live";
   const liveLabel = document.createElement("span");
   liveLabel.className = "stat-label";
-  liveLabel.textContent = "БОЙ";
+  liveLabel.textContent = "БОЙЦЫ";
   const liveValue = document.createElement("span");
   liveValue.className = "stat-value";
-  live.append(liveLabel, document.createTextNode(" "), liveValue);
+  live.append(liveLabel, liveValue);
 
   const reserve = document.createElement("div");
   reserve.className = "stat stat-reserve";
   const reserveLabel = document.createElement("span");
   reserveLabel.className = "stat-label";
-  reserveLabel.textContent = "РЕЗ";
+  reserveLabel.textContent = "РЕЗЕРВ";
   const reserveValue = document.createElement("span");
   reserveValue.className = "stat-value";
-  reserve.append(reserveLabel, document.createTextNode(" "), reserveValue);
+  reserve.append(reserveLabel, reserveValue);
 
   const status = document.createElement("div");
 
-  top.append(flag, code, live, reserve, status);
-
-  const bottom = document.createElement("div");
-  bottom.className = "row-bottom";
-
-  const hp = document.createElement("div");
-  hp.className = "hp";
-  const fill = document.createElement("div");
-  fill.className = "hp-fill";
-  hp.appendChild(fill);
-
-  const hpNum = document.createElement("div");
-  hpNum.className = "hp-num";
-
-  bottom.append(hp, hpNum);
-  el.append(top, bottom);
-
-  el._refs = { flag, code, liveValue, reserveValue, status, fill, hpNum };
+  el.append(flag, code, live, reserve, status);
+  el._refs = { flag, code, liveValue, reserveValue, status };
   debugStats.cardsCreated += 1;
   debugLog(`card created id=${country.id} total=${debugStats.cardsCreated}`);
   return el;
@@ -218,7 +203,6 @@ function updateCard(el, country) {
     el.className = nextClass;
   }
 
-  // Only reassign if country id on this node changed (should not happen for stable cardById).
   assignFlagAsset(refs.flag, country.id);
   const label = country.code || country.id;
   if (refs.flag.getAttribute("aria-label") !== label) {
@@ -245,20 +229,6 @@ function updateCard(el, country) {
   }
   if (refs.status.textContent !== badge.text) {
     refs.status.textContent = badge.text;
-  }
-
-  const width = `${hpPercent(country)}%`;
-  const color = hpColor(country);
-  if (refs.fill.style.width !== width) {
-    refs.fill.style.width = width;
-  }
-  if (refs.fill.style.backgroundColor !== color && refs.fill.style.background !== color) {
-    refs.fill.style.background = color;
-  }
-
-  const hpText = `${country.coreHp} / ${country.coreMaxHp}`;
-  if (refs.hpNum.textContent !== hpText) {
-    refs.hpNum.textContent = hpText;
   }
 }
 
@@ -355,24 +325,17 @@ function detectEvents(countries) {
  */
 function fillPanel(panel, list) {
   const desired = list.map((country) => ensureCard(country));
-  let changed = false;
 
   for (let i = 0; i < desired.length; i++) {
     const want = desired[i];
     const current = panel.children[i];
     if (current !== want) {
       panel.insertBefore(want, current || null);
-      changed = true;
     }
   }
 
   while (panel.children.length > desired.length) {
     panel.removeChild(panel.lastChild);
-    changed = true;
-  }
-
-  if (changed && debug) {
-    debugLog(`panel synced children=${panel.children.length}`);
   }
 }
 
@@ -386,9 +349,15 @@ function render(data) {
   if (debug && debugStats.snapshotsUpdated % 20 === 0) {
     debugLog("snapshot heartbeat");
   }
+  if (!phaseEl || !timerEl || !timerLabelEl || !remainingEl) {
+    debugLog("missing hud nodes — HTML/JS mismatch (hard-refresh OBS browser source)");
+    return;
+  }
 
-  brandEl.textContent = "ARENA OF NATIONS";
-  phaseEl.textContent = phaseLabel(data.phase);
+  const phase = data.phase || "IDLE";
+  phaseEl.textContent = phaseLabel(phase);
+  timerLabelEl.textContent = timerLabel(phase);
+
   const sec = Math.max(0, data.remainingSeconds || 0);
   const mm = String(Math.floor(sec / 60)).padStart(2, "0");
   const ss = String(sec % 60).padStart(2, "0");
@@ -397,43 +366,116 @@ function render(data) {
   const countries = Array.isArray(data.countries) ? data.countries.slice() : [];
   countries.sort((a, b) => (a.baseSlot ?? 999) - (b.baseSlot ?? 999));
 
-  const count = data.activeCountryCount ?? countries.filter(c => !c.eliminated).length;
-  remainingEl.textContent = `СТРАН: ${count}`;
+  const aliveCount = countries.filter(c => !c.eliminated).length;
+  const count = data.activeCountryCount ?? aliveCount;
+  remainingEl.textContent = `${count} ${countriesWord(count)}`;
 
-  if ((data.activeCountryCount || 0) === 0 && countries.length === 0) {
+  if (countries.length === 0) {
     clearPanelsKeepCards();
-    showNote("Раунд не начат", false);
     previousById = new Map();
+    if (phase === "IDLE" || phase === "BREAK") {
+      showNote(phase === "BREAK" ? "Перерыв · ждём страны" : "Ждём участников", false);
+    } else {
+      showNote("Ждём участников", false);
+    }
     return;
   }
 
   hideNote();
   detectEvents(countries);
 
+  // Up to 20 countries: 10 left + 10 right, dense rows stay readable on TikTok.
   fillPanel(leftPanel, countries.slice(0, 10));
   fillPanel(rightPanel, countries.slice(10, 20));
 }
 
-async function poll() {
+let lastSuccessfulData = null;
+let pollTimer = null;
+let pollInFlight = false;
+let pollAbort = null;
+let backoffMs = POLL_MS;
+const BACKOFF_MAX_MS = 10000;
+const STATE_URLS = ["/arena/overlay-state", "/api/arena/state"];
+
+const connectionStatusEl = document.getElementById("connection-status");
+
+function setConnectionStatus(mode) {
+  if (!connectionStatusEl) return;
+  connectionStatusEl.textContent = mode;
+  connectionStatusEl.classList.remove("online", "reconnect", "offline", "hidden");
+  if (mode === "ONLINE") {
+    connectionStatusEl.classList.add("online");
+    if (!preview) connectionStatusEl.classList.add("hidden");
+  } else if (mode === "RECONNECTING") {
+    connectionStatusEl.classList.add("reconnect");
+    if (preview) connectionStatusEl.classList.remove("hidden");
+    else connectionStatusEl.classList.add("hidden");
+  } else {
+    connectionStatusEl.classList.add("offline");
+    if (preview) connectionStatusEl.classList.remove("hidden");
+    else connectionStatusEl.classList.add("hidden");
+  }
+}
+
+async function pollOnce() {
+  if (pollInFlight) return;
+  pollInFlight = true;
+  if (pollAbort) {
+    try { pollAbort.abort(); } catch (_e) { /* ignore */ }
+  }
+  pollAbort = new AbortController();
+  const timeoutId = setTimeout(() => pollAbort.abort(), Math.max(1500, POLL_MS * 4));
   try {
-    const response = await fetch("/api/arena/state", { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    if (typeof data.sequence === "number" && data.sequence === lastSequence) return;
-    lastSequence = data.sequence ?? lastSequence;
-    render(data);
+    let data = null;
+    let lastError = null;
+    for (const url of STATE_URLS) {
+      try {
+        const response = await fetch(url, { cache: "no-store", signal: pollAbort.signal });
+        if (!response.ok) {
+          lastError = new Error(`HTTP ${response.status}`);
+          continue;
+        }
+        data = await response.json();
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (!data) {
+      throw lastError || new Error("no_state");
+    }
+    backoffMs = POLL_MS;
+    setConnectionStatus("ONLINE");
+    if (!(lastSuccessfulData && typeof data.sequence === "number" && data.sequence === lastSequence)) {
+      lastSequence = data.sequence ?? lastSequence;
+      lastSuccessfulData = data;
+      render(data);
+    }
   } catch (_err) {
-    showNote("Нет соединения", true);
+    setConnectionStatus(lastSuccessfulData ? "RECONNECTING" : "OFFLINE");
+    if (!lastSuccessfulData) {
+      showNote("Нет соединения с ареной", true);
+    }
+    backoffMs = Math.min(BACKOFF_MAX_MS, Math.max(POLL_MS, backoffMs * 2));
+  } finally {
+    clearTimeout(timeoutId);
+    pollInFlight = false;
+    if (pollTimer != null) clearTimeout(pollTimer);
+    pollTimer = setTimeout(pollOnce, backoffMs);
   }
 }
 
 preloadFlags();
 window.addEventListener("resize", updateFitScale);
 updateFitScale();
-setInterval(poll, POLL_MS);
-poll();
+setConnectionStatus("ONLINE");
+pollOnce();
 
 if (debug) {
-  window.__tiktokOverlayDebug = debugStats;
-  debugLog("debug mode on (?debug=1), flagFormat=PNG");
+  window.__tiktokOverlayDebug = Object.assign(debugStats, {
+    getBackoffMs: () => backoffMs,
+    hasLastState: () => !!lastSuccessfulData,
+    isPolling: () => pollInFlight,
+  });
+  debugLog("debug mode on (?debug=1), flagFormat=PNG, resilient poll enabled");
 }

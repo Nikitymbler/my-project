@@ -71,7 +71,11 @@ public final class ArenaMatchManager {
 		ArenaRoundHudSync.registerCommon();
 		ArenaCoreManager.get().resetAllStates();
 		ArenaCoreRescueManager.get().clearAll();
-		ServerTickEvents.END_SERVER_TICK.register(server -> INSTANCE.tick(server));
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			// Drain viewer/S2E gifts before rescue expiry so same-tick heals win the race.
+			ArenaViewerEventManager.get().processQueuedEvents(server);
+			INSTANCE.tick(server);
+		});
 		ArenaDamageTracker.register();
 		ArenaMatchCommands.register();
 		ArenaBalanceCommands.register();
@@ -86,6 +90,7 @@ public final class ArenaMatchManager {
 		ArenaViewerEventManager.register();
 		ArenaStreamToEarnCommands.register();
 		ArenaStreamToEarnHttpBridge.register();
+		ArenaOverlayHttpServer.register();
 		ArenaOverlayStateService.register();
 		ArenaOverlayCommands.register();
 		ArenaCoreDisplayManager.register();
@@ -283,6 +288,27 @@ public final class ArenaMatchManager {
 		testBattleDeferred = false;
 		startBattle(server);
 		broadcast(server, Component.literal("Битва началась!"));
+	}
+
+	/**
+	 * Test-only: enter BREAK as after a finished round (fighters/reserves cleared, queue preserved).
+	 */
+	public synchronized void beginBreakForTest(MinecraftServer server) {
+		clearAllFighters(server);
+		clearReserves();
+		battleOutcomeDecided = true;
+		beginBreak(server);
+	}
+
+	/**
+	 * Test-only: expire the BREAK timer immediately and run the next-round promote path.
+	 */
+	public synchronized void forceBreakTimeoutForTest(MinecraftServer server) {
+		if (state != ArenaMatchState.BREAK) {
+			return;
+		}
+		remainingTicks = 0;
+		tickBreak(server, server.overworld());
 	}
 
 	/**
@@ -498,6 +524,7 @@ public final class ArenaMatchManager {
 		clearFightersForCountry(server, country);
 		reserves.get(country).clear();
 		activeCountries.remove(country);
+		releaseBaseSlot(country);
 		ArenaCoreCombatManager.get().onCountryEliminated(server, country);
 		ArenaHudManager.get().onCountryEliminated(country);
 
@@ -670,6 +697,13 @@ public final class ArenaMatchManager {
 		Arrays.fill(occupiedBaseSlots, false);
 	}
 
+	private void releaseBaseSlot(Country country) {
+		Integer slot = countryBaseSlots.remove(country);
+		if (slot != null && slot >= 0 && slot < occupiedBaseSlots.length) {
+			occupiedBaseSlots[slot] = false;
+		}
+	}
+
 	/** Test-only: register round participants and base slots. */
 	public synchronized void registerTestCountries(MinecraftServer server, Country... countries) {
 		for (Country country : countries) {
@@ -809,6 +843,7 @@ public final class ArenaMatchManager {
 
 		activeCountries.clear();
 		roundParticipants.clear();
+		clearBaseLayout();
 		for (Country country : Country.values()) {
 			spawnCounters.put(country, 0);
 		}
@@ -838,6 +873,7 @@ public final class ArenaMatchManager {
 		arenaCenter = ArenaSpawns.resolveMatchCenter(server, fallbackCenter);
 
 		ArenaCoreRescueManager.get().clearAll();
+		clearBaseLayout();
 		addParticipant(server, firstCountry);
 		ArenaCoreManager.get().activate(server, firstCountry);
 		state = ArenaMatchState.WAITING_FOR_OPPONENT;
@@ -855,6 +891,45 @@ public final class ArenaMatchManager {
 						+ " захватила арену! Ожидание соперника: "
 						+ ArenaConfig.get().getWaitingSeconds()
 						+ " секунд."));
+
+		// Gifts during BREAK may queue several countries; promote the rest now so they
+		// join WAITING/BATTLE instead of sitting forever in nextRoundQueue.
+		promoteQueuedCountriesAfterBreak(server, level);
+	}
+
+	/**
+	 * After BREAK→WAITING promotes the first queued country, drain remaining countries
+	 * from {@link #nextRoundQueue} through the normal waiting/battle gift paths.
+	 */
+	private void promoteQueuedCountriesAfterBreak(MinecraftServer server, ServerLevel level) {
+		while (!nextRoundQueue.isEmpty()
+				&& (state == ArenaMatchState.WAITING_FOR_OPPONENT || state == ArenaMatchState.BATTLE)) {
+			Country nextCountry = nextRoundQueue.peek().getCountry();
+			if (activeCountries.size() >= ArenaCountryBaseLayout.MAX_ACTIVE_COUNTRIES
+					&& !activeCountries.contains(nextCountry)) {
+				// Leave overflow countries queued for a later round.
+				return;
+			}
+
+			List<PendingFighter> batch = takeCountryFromNextRound(nextCountry);
+			if (batch.isEmpty()) {
+				return;
+			}
+
+			for (int i = 0; i < batch.size(); i++) {
+				PendingFighter pending = batch.get(i);
+				if (state == ArenaMatchState.WAITING_FOR_OPPONENT) {
+					handleGiftWhileWaiting(server, level, pending);
+				} else if (state == ArenaMatchState.BATTLE) {
+					handleGiftWhileBattle(server, level, pending);
+				} else {
+					for (int j = i; j < batch.size(); j++) {
+						nextRoundQueue.add(batch.get(j));
+					}
+					return;
+				}
+			}
+		}
 	}
 
 	private List<PendingFighter> takeCountryFromNextRound(Country country) {
@@ -981,6 +1056,7 @@ public final class ArenaMatchManager {
 		remainingTicks = config.getBreakSeconds() * 20;
 		activeCountries.clear();
 		roundParticipants.clear();
+		clearBaseLayout();
 		ArenaCoreCombatManager.get().clearAll(server);
 		ArenaCoreRescueManager.get().clearAll();
 		ArenaCoreManager.get().resetRound(server);
@@ -1007,6 +1083,7 @@ public final class ArenaMatchManager {
 				entity.discard();
 			}
 		}
+		invalidateLivingCountsCache();
 	}
 
 	private void clearFightersForCountry(MinecraftServer server, Country country) {
@@ -1021,6 +1098,7 @@ public final class ArenaMatchManager {
 				entity.discard();
 			}
 		}
+		invalidateLivingCountsCache();
 	}
 
 	private static void broadcast(MinecraftServer server, Component message) {

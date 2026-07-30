@@ -33,8 +33,10 @@ final class ArenaOverlayCommands {
 			dispatcher.register(Commands.literal("arena_overlay_restart")
 					.requires(source -> source.hasPermission(2))
 					.executes(context -> {
-						ArenaStreamToEarnHttpBridge.restartServer();
-						context.getSource().sendSuccess(() -> Component.literal("Overlay HTTP server restarted."), false);
+						ArenaOverlayHttpServer.restart();
+						context.getSource().sendSuccess(
+								() -> Component.literal("Overlay HTTP server (8766 whitelist) restarted."),
+								false);
 						return Command.SINGLE_SUCCESS;
 					}));
 		});
@@ -44,21 +46,40 @@ final class ArenaOverlayCommands {
 		ArenaConfig config = ArenaConfig.get();
 		ArenaOverlayStateService overlay = ArenaOverlayStateService.get();
 		ArenaMatchManager match = ArenaMatchManager.get();
+		ArenaOverlayPublicUrl.ValidationResult publicUrl = config.getOverlayPublicUrlValidation();
 		return "Overlay status:\n"
-				+ "running=" + ArenaStreamToEarnHttpBridge.isRunning() + '\n'
-				+ "bind=" + ArenaStreamToEarnHttpBridge.getBindAddress() + '\n'
-				+ "port=" + ArenaStreamToEarnHttpBridge.getRunningPort() + '\n'
-				+ "desktop_url=" + ArenaStreamToEarnHttpBridge.getOverlayUrl() + '\n'
-				+ "tiktok_url=" + ArenaStreamToEarnHttpBridge.getTikTokOverlayUrl() + '\n'
-				+ "api=/api/arena/state\n"
+				+ "overlay_http_enabled=" + config.isOverlayHttpEnabled() + '\n'
+				+ "local_bind=" + ArenaOverlayHttpServer.getBindAddress() + '\n'
+				+ "local_port=" + ArenaOverlayHttpServer.getRunningPort() + '\n'
+				+ "local_running=" + ArenaOverlayHttpServer.isRunning() + '\n'
+				+ "local_health=" + ArenaOverlayHttpServer.getLocalHealthUrl() + '\n'
+				+ "local_tiktok=" + ArenaOverlayHttpServer.getLocalTikTokUrl() + '\n'
+				+ "local_state=" + ArenaOverlayHttpServer.getLocalStateUrl() + '\n'
+				+ "instances=" + ArenaOverlayHttpServer.getInstanceCount() + '\n'
+				+ "active_http_threads~=" + ArenaOverlayHttpServer.getActiveThreadEstimate() + '\n'
+				+ "last_server_error=" + blank(ArenaOverlayHttpServer.getLastStartError()) + '\n'
+				+ "last_handler_error=" + blank(ArenaOverlayHttpIO.lastError()) + '\n'
+				+ "last_state_request_ms=" + ArenaOverlayHttpIO.lastStateRequestGameTime() + '\n'
+				+ "public_enabled=" + config.isOverlayPublicEnabled() + '\n'
+				+ "public_url_valid=" + publicUrl.valid() + '\n'
+				+ "public_url=" + (publicUrl.valid() ? publicUrl.url() : ("(invalid: " + publicUrl.reason() + ")")) + '\n'
+				+ "public_token_shown=false\n"
+				+ "s2e_port=" + config.getS2eHttpPort() + '\n'
+				+ "s2e_running=" + ArenaStreamToEarnHttpBridge.isRunning() + '\n'
+				+ "s2e_endpoints_active=" + ArenaStreamToEarnHttpBridge.areS2eEndpointsActive() + '\n'
+				+ "public_has_gift_chat_routes=false\n"
+				+ "api_aliases=/arena/overlay-state,/api/arena/state\n"
 				+ "snapshot_sequence=" + overlay.snapshotSequence() + '\n'
 				+ "snapshot_countries=" + overlay.snapshotCountryCount() + '\n'
 				+ "active_countries=" + match.getActiveCountries().size() + '\n'
 				+ "round_countries=" + match.getCurrentRoundCountries().size() + '\n'
 				+ "last_snapshot_age_ms=" + overlay.lastSnapshotAgeMs() + '\n'
 				+ "http_requests=" + overlay.requestCount() + '\n'
-				+ "hud_mode=" + ArenaHudManager.get().getHudMode() + '\n'
-				+ "overlay_enabled=" + config.isOverlayEnabled();
+				+ "hud_mode=" + ArenaHudManager.get().getHudMode();
+	}
+
+	private static String blank(String value) {
+		return value == null || value.isBlank() ? "-" : value;
 	}
 
 	private static String buildDump(net.minecraft.server.MinecraftServer server) {

@@ -23,11 +23,7 @@
 		]
 	},
 	"mixins": [
-		"arena_of_nations.mixins.json",
-		{
-			"config": "arena_of_nations.client.mixins.json",
-			"environment": "client"
-		}
+		"arena_of_nations.mixins.json"
 	],
 	"depends": {
 		"fabricloader": ">=0.19.3",

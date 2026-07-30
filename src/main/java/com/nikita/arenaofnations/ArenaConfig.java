@@ -39,10 +39,17 @@ public final class ArenaConfig {
 	private boolean s2eHttpEnabled = false;
 	private int s2eHttpPort = 8765;
 	private String s2eHttpToken = "";
+	/** Legacy alias; prefer {@link #overlayHttpEnabled}. */
 	private boolean overlayEnabled = true;
+	private boolean overlayHttpEnabled = true;
+	private String overlayHttpBind = "127.0.0.1";
+	private int overlayHttpPort = 8766;
 	private String overlayBindAddress = "127.0.0.1";
-	private int overlayPort = 8765;
+	private int overlayPort = 8766;
 	private int overlayPollMs = 250;
+	private boolean overlayPublicEnabled = false;
+	private String overlayPublicBaseUrl = "";
+	private String overlayPublicPath = "/overlay/tiktok";
 	private ArenaHudDisplayMode defaultHudMode = ArenaHudDisplayMode.EXTERNAL;
 
 	private ArenaConfig() {
@@ -119,9 +126,15 @@ public final class ArenaConfig {
 		properties.setProperty("s2e_http_port", "8765");
 		properties.setProperty("s2e_http_token", "");
 		properties.setProperty("overlay_enabled", "true");
+		properties.setProperty("overlay_http_enabled", "true");
+		properties.setProperty("overlay_http_bind", "127.0.0.1");
+		properties.setProperty("overlay_http_port", "8766");
 		properties.setProperty("overlay_bind_address", "127.0.0.1");
-		properties.setProperty("overlay_port", "8765");
+		properties.setProperty("overlay_port", "8766");
 		properties.setProperty("overlay_poll_ms", "250");
+		properties.setProperty("overlay_public_enabled", "false");
+		properties.setProperty("overlay_public_base_url", "");
+		properties.setProperty("overlay_public_path", "/overlay/tiktok");
 		properties.setProperty("default_hud_mode", "external");
 		return properties;
 	}
@@ -152,9 +165,27 @@ public final class ArenaConfig {
 		s2eHttpPort = readBoundedInt(properties, "s2e_http_port", 8765, 1024, 65535);
 		s2eHttpToken = readTrimmedString(properties, "s2e_http_token", "");
 		overlayEnabled = readBoolean(properties, "overlay_enabled", true);
-		overlayBindAddress = readTrimmedString(properties, "overlay_bind_address", "127.0.0.1");
-		overlayPort = readBoundedInt(properties, "overlay_port", 8765, 1024, 65535);
+		overlayHttpEnabled = readBoolean(properties, "overlay_http_enabled", overlayEnabled);
+		overlayHttpBind = readTrimmedString(properties, "overlay_http_bind", "127.0.0.1");
+		overlayHttpPort = readBoundedInt(properties, "overlay_http_port", 8766, 1024, 65535);
+		overlayBindAddress = readTrimmedString(properties, "overlay_bind_address", overlayHttpBind);
+		overlayPort = readBoundedInt(properties, "overlay_port", overlayHttpPort, 1024, 65535);
+		// Prefer explicit overlay_http_* keys; fall back to legacy overlay_* if http_* absent in file.
+		if (!properties.containsKey("overlay_http_bind") && properties.containsKey("overlay_bind_address")) {
+			overlayHttpBind = overlayBindAddress;
+		}
+		if (!properties.containsKey("overlay_http_port") && properties.containsKey("overlay_port")) {
+			// Migrate old shared 8765 overlay port to dedicated 8766 unless already distinct from S2E.
+			if (overlayPort == s2eHttpPort) {
+				overlayHttpPort = 8766;
+			} else {
+				overlayHttpPort = overlayPort;
+			}
+		}
 		overlayPollMs = readBoundedInt(properties, "overlay_poll_ms", 250, 100, 5000);
+		overlayPublicEnabled = readBoolean(properties, "overlay_public_enabled", false);
+		overlayPublicBaseUrl = readTrimmedString(properties, "overlay_public_base_url", "");
+		overlayPublicPath = readTrimmedString(properties, "overlay_public_path", "/overlay/tiktok");
 		defaultHudMode = ArenaHudDisplayMode.parse(
 				readTrimmedString(properties, "default_hud_mode", "external"),
 				ArenaHudDisplayMode.EXTERNAL);
@@ -302,7 +333,8 @@ public final class ArenaConfig {
 	}
 
 	/**
-	 * Configured StreamToEarn HTTP token. Empty means HTTP bridge must not start.
+	 * Configured StreamToEarn HTTP token. Empty disables S2E gift/chat endpoints only;
+	 * overlay HTTP may still start when overlay_enabled=true.
 	 * HTTP settings apply at Minecraft server start; reload does not restart the bridge.
 	 */
 	public String getS2eHttpToken() {
@@ -314,19 +346,55 @@ public final class ArenaConfig {
 	}
 
 	public boolean isOverlayEnabled() {
-		return overlayEnabled;
+		return overlayHttpEnabled || overlayEnabled;
+	}
+
+	public boolean isOverlayHttpEnabled() {
+		return overlayHttpEnabled;
+	}
+
+	public String getOverlayHttpBind() {
+		return overlayHttpBind;
+	}
+
+	public int getOverlayHttpPort() {
+		return overlayHttpPort;
 	}
 
 	public String getOverlayBindAddress() {
-		return overlayBindAddress;
+		return overlayHttpBind;
 	}
 
 	public int getOverlayPort() {
-		return overlayPort;
+		return overlayHttpPort;
 	}
 
 	public int getOverlayPollMs() {
 		return overlayPollMs;
+	}
+
+	public boolean isOverlayPublicEnabled() {
+		return overlayPublicEnabled;
+	}
+
+	public String getOverlayPublicBaseUrl() {
+		return overlayPublicBaseUrl;
+	}
+
+	public String getOverlayPublicPath() {
+		return overlayPublicPath;
+	}
+
+	public ArenaOverlayPublicUrl.ValidationResult getOverlayPublicUrlValidation() {
+		if (!overlayPublicEnabled) {
+			return ArenaOverlayPublicUrl.ValidationResult.fail("public_disabled");
+		}
+		return ArenaOverlayPublicUrl.validate(overlayPublicBaseUrl, overlayPublicPath);
+	}
+
+	public String getOverlayPublicUrl() {
+		ArenaOverlayPublicUrl.ValidationResult result = getOverlayPublicUrlValidation();
+		return result.valid() ? result.url() : "";
 	}
 
 	public ArenaHudDisplayMode getDefaultHudMode() {

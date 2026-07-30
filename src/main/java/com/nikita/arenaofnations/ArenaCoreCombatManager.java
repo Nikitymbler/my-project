@@ -1,8 +1,10 @@
 package com.nikita.arenaofnations;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -329,8 +331,13 @@ public final class ArenaCoreCombatManager {
 			return;
 		}
 
-		for (Map.Entry<UUID, FighterCoreCombat> entry : fighters.entrySet()) {
-			FighterCoreCombat state = entry.getValue();
+		// Copy entries: executeCoreHit / cancelCoreAttack may structurally mutate `fighters`.
+		List<Map.Entry<UUID, FighterCoreCombat>> windups = new ArrayList<>(fighters.entrySet());
+		for (Map.Entry<UUID, FighterCoreCombat> entry : windups) {
+			FighterCoreCombat state = fighters.get(entry.getKey());
+			if (state == null) {
+				continue;
+			}
 			if (state.rallyOnly) {
 				state.windupTicksRemaining = 0;
 				state.windupCoreTarget = null;
