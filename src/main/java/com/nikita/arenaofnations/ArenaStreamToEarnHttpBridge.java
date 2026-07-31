@@ -275,7 +275,19 @@ public final class ArenaStreamToEarnHttpBridge {
 		try {
 			ArenaStreamToEarnCommands.recordHttpHit(chat);
 
-			if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+			String method = exchange.getRequestMethod();
+			if ("OPTIONS".equalsIgnoreCase(method)) {
+				Headers headers = exchange.getResponseHeaders();
+				headers.set("Access-Control-Allow-Origin", "*");
+				headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+				headers.set("Access-Control-Allow-Headers", "Content-Type, X-Arena-Token");
+				headers.set("Access-Control-Max-Age", "86400");
+				exchange.sendResponseHeaders(204, -1);
+				exchange.close();
+				return;
+			}
+
+			if (!"POST".equalsIgnoreCase(method)) {
 				rejectHttp(exchange, 405, "method_not_allowed", "POST");
 				return;
 			}
@@ -286,6 +298,7 @@ public final class ArenaStreamToEarnHttpBridge {
 					long contentLength = Long.parseLong(contentLengthHeader.trim());
 					if (contentLength > MAX_COMPAT_FULL_BODY_BYTES) {
 						drainAndClose(exchange.getRequestBody());
+						ArenaStreamToEarnCommands.recordLastHttpBody("(too_large)");
 						rejectHttp(exchange, 413, "payload_too_large", null);
 						return;
 					}
@@ -296,12 +309,14 @@ public final class ArenaStreamToEarnHttpBridge {
 
 			byte[] bodyBytes = readBodyLimited(exchange.getRequestBody(), MAX_COMPAT_FULL_BODY_BYTES);
 			if (bodyBytes == null) {
+				ArenaStreamToEarnCommands.recordLastHttpBody("(too_large)");
 				rejectHttp(exchange, 413, "payload_too_large", null);
 				return;
 			}
 
 			bodyBytes = stripUtf8Bom(bodyBytes);
 			String bodyText = stripBomChar(new String(bodyBytes, StandardCharsets.UTF_8));
+			ArenaStreamToEarnCommands.recordLastHttpBody(bodyText);
 			int firstNonWs = indexOfFirstNonWhitespace(bodyText);
 			if (firstNonWs >= 0 && bodyText.charAt(firstNonWs) == '{') {
 				handleJsonBodyAuth(exchange, chat, bodyText.substring(firstNonWs));
@@ -377,9 +392,8 @@ public final class ArenaStreamToEarnHttpBridge {
 		}
 
 		String viewerId = readJsonStringField(obj, "viewerId", true);
-		if (viewerId == null || viewerId.isEmpty()) {
-			rejectHttp(exchange, 400, "missing_field", null);
-			return;
+		if (viewerId == null || viewerId.isEmpty() || "{uniqueid}".equals(viewerId)) {
+			viewerId = "s2e_play";
 		}
 		if (containsPayloadSeparator(viewerId)) {
 			rejectHttp(exchange, 400, "invalid_field", null);
@@ -389,9 +403,8 @@ public final class ArenaStreamToEarnHttpBridge {
 		String payload;
 		if (chat) {
 			String message = readJsonStringField(obj, "message", true);
-			if (message == null) {
-				rejectHttp(exchange, 400, "missing_field", null);
-				return;
+			if (message == null || message.isEmpty() || "{comment}".equals(message)) {
+				message = "ru";
 			}
 			if (containsPayloadSeparator(message)) {
 				rejectHttp(exchange, 400, "invalid_field", null);
@@ -401,8 +414,7 @@ public final class ArenaStreamToEarnHttpBridge {
 		} else {
 			Integer coins = readJsonCoinsField(obj);
 			if (coins == null) {
-				rejectHttp(exchange, 400, "missing_field", null);
-				return;
+				coins = 1;
 			}
 			String eventId = readJsonStringField(obj, "eventId", false);
 			if (eventId != null && !eventId.isEmpty() && containsPayloadSeparator(eventId)) {
@@ -705,6 +717,9 @@ public final class ArenaStreamToEarnHttpBridge {
 		Headers headers = exchange.getResponseHeaders();
 		headers.set("Content-Type", "application/json; charset=utf-8");
 		headers.set("Cache-Control", "no-store");
+		headers.set("Access-Control-Allow-Origin", "*");
+		headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+		headers.set("Access-Control-Allow-Headers", "Content-Type, X-Arena-Token");
 		if (allowMethod != null) {
 			headers.set("Allow", allowMethod);
 		}

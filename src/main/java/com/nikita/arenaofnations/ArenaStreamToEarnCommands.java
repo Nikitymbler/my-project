@@ -33,6 +33,7 @@ public final class ArenaStreamToEarnCommands {
 	private static final AtomicLong httpHitsGift = new AtomicLong();
 	private static final AtomicReference<String> lastResult = new AtomicReference<>("NONE");
 	private static final AtomicReference<String> lastRejectReason = new AtomicReference<>("");
+	private static final AtomicReference<String> lastHttpBodyPreview = new AtomicReference<>("");
 
 	private ArenaStreamToEarnCommands() {
 	}
@@ -137,7 +138,10 @@ public final class ArenaStreamToEarnCommands {
 		builder.append("ingress last result=").append(lastResult.get()).append('\n');
 		String reason = lastRejectReason.get();
 		builder.append("ingress reject reason=")
-				.append(reason == null || reason.isEmpty() ? "нет" : reason);
+				.append(reason == null || reason.isEmpty() ? "нет" : reason)
+				.append('\n');
+		builder.append("last HTTP body=")
+				.append(emptyAsNone(lastHttpBodyPreview.get()));
 		return builder.toString();
 	}
 
@@ -153,6 +157,22 @@ public final class ArenaStreamToEarnCommands {
 		httpHitsGift.set(0);
 		lastResult.set("NONE");
 		lastRejectReason.set("");
+		lastHttpBodyPreview.set("");
+	}
+
+	/** Stores a redacted preview of the last StreamToEarn HTTP body for `/arena_s2e_status`. */
+	public static void recordLastHttpBody(String bodyText) {
+		if (bodyText == null || bodyText.isEmpty()) {
+			lastHttpBodyPreview.set("(empty)");
+			return;
+		}
+		String preview = bodyText;
+		if (preview.length() > 240) {
+			preview = preview.substring(0, 240) + "…";
+		}
+		preview = preview.replaceAll("(\"token\"\\s*:\\s*\")([^\"]*)(\")", "$1***$3");
+		preview = preview.replace('\n', ' ').replace('\r', ' ');
+		lastHttpBodyPreview.set(preview);
 	}
 
 	private static AcceptResult parseAndEnqueueChat(String payload) {
