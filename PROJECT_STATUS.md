@@ -515,6 +515,8 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ~15–20 последних этапов по коду. Без простыней Java.
 
+90. **Fighter flag mirror + US stars (31.07)** — флаги бойцов: U-flip в `ArenaFighterOverheadRenderer.blitFlagQuad` (компенсация `scale(-s,-s,s)`); базы не трогались. США: `us.svg` со звёздами как `<polygon>` (старый `marker-mid` не растеризовался) → PNG fighter/HD/tiktok. Тест `ArenaUsFlagAndFighterUvTest`. Нужен рестарт клиента / F3+T.
+
 89. **S2E gift HTTP 400 fix (31.07)** — Play/BOM/`{coins}`; permissive defaults; CORS; `last HTTP body=`; `TEST_S2E_NOW.cmd`. Успешный ответ gift/chat: **HTTP 200** (+ `ok`/`success`) вместо 202 — StreamToEarn больше не показывает ложный fail toast. Нужен pull+build+рестарт мира. Chat Play (`message":"ru"`) до Gift, иначе `country_not_selected`.
 
 82. **Remove overlay team-codes hint (31.07)** — убран блок «КОДЫ КОМАНД — НАПИШИ В ЧАТ» из TikTok overlay (HTML/CSS/JS) и поля `teamJoinCodes`/`teamJoinHint` из snapshot. Вступление в команду чатом без изменений. Тест обновлён. `clean build` SUCCESS; Minecraft не запускался.

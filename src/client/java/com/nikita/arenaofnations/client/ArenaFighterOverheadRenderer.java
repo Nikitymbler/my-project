@@ -166,6 +166,8 @@ public final class ArenaFighterOverheadRenderer {
 	/**
 	 * Textured flag quad with normalized UVs.
 	 * Local Y grows downward after scale(-s,-s,s); top of flag is -halfH.
+	 * U is flipped vs texture file so hoist (left in PNG) stays on the viewer's left
+	 * after the billboard {@code scale(-s,-s,s)} mirror — same visual as base markers.
 	 */
 	private static void blitFlagQuad(
 			PoseStack poseStack,
@@ -181,10 +183,10 @@ public final class ArenaFighterOverheadRenderer {
 			int light,
 			int overlay) {
 		PoseStack.Pose pose = poseStack.last();
-		vertex(consumer, pose, left, bottom, z, 0.0F, 1.0F, r, g, b, 255, light, overlay);
-		vertex(consumer, pose, right, bottom, z, 1.0F, 1.0F, r, g, b, 255, light, overlay);
-		vertex(consumer, pose, right, top, z, 1.0F, 0.0F, r, g, b, 255, light, overlay);
-		vertex(consumer, pose, left, top, z, 0.0F, 0.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, left, bottom, z, 1.0F, 1.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, right, bottom, z, 0.0F, 1.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, right, top, z, 0.0F, 0.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, left, top, z, 1.0F, 0.0F, r, g, b, 255, light, overlay);
 	}
 
 	/**
