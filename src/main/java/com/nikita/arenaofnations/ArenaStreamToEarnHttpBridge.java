@@ -543,7 +543,8 @@ public final class ArenaStreamToEarnHttpBridge {
 			return null;
 		}
 		if (raw.isEmpty()) {
-			return null;
+			// StreamToEarn Play often substitutes an empty string when no live gift.
+			return 1;
 		}
 		// StreamToEarn Play without a live gift leaves placeholders unsubstituted.
 		if (raw.length() >= 3 && raw.charAt(0) == '{' && raw.charAt(raw.length() - 1) == '}') {

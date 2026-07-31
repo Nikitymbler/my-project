@@ -164,6 +164,18 @@ Body:
 
 Если снова **400**: в Minecraft `/arena_s2e_status` смотрите `HTTP hits gift=` (дошёл ли POST) и `ingress reject reason=`. После правки мода нужен **полный выход из мира и заход снова**.
 
+**Play без эфира (тест):** подстановки `{coins}` / `{uniqueid}` нет — временно:
+
+```json
+{
+  "token": "<TOKEN>",
+  "viewerId": "testUniqueId",
+  "coins": "1"
+}
+```
+
+Сначала Chat Play с `"message": "ru"` и тем же `viewerId`, потом Gift Play. Для живого эфира верните `{uniqueid}` / `{coins}`.
+
 Опционально `eventId` (только если появится настоящий уникальный id события):
 
 ```json
