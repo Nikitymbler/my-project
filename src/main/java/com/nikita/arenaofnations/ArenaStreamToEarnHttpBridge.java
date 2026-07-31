@@ -7,6 +7,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -272,8 +273,10 @@ public final class ArenaStreamToEarnHttpBridge {
 	 */
 	private static void handleStreamToEarnBodyAuth(HttpExchange exchange, boolean chat) throws IOException {
 		try {
+			ArenaStreamToEarnCommands.recordHttpHit(chat);
+
 			if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-				sendJson(exchange, 405, "{\"accepted\":false,\"reason\":\"method_not_allowed\"}", "POST");
+				rejectHttp(exchange, 405, "method_not_allowed", "POST");
 				return;
 			}
 
@@ -283,7 +286,7 @@ public final class ArenaStreamToEarnHttpBridge {
 					long contentLength = Long.parseLong(contentLengthHeader.trim());
 					if (contentLength > MAX_COMPAT_FULL_BODY_BYTES) {
 						drainAndClose(exchange.getRequestBody());
-						sendJson(exchange, 413, "{\"accepted\":false,\"reason\":\"payload_too_large\"}", null);
+						rejectHttp(exchange, 413, "payload_too_large", null);
 						return;
 					}
 				} catch (NumberFormatException ignored) {
@@ -293,20 +296,21 @@ public final class ArenaStreamToEarnHttpBridge {
 
 			byte[] bodyBytes = readBodyLimited(exchange.getRequestBody(), MAX_COMPAT_FULL_BODY_BYTES);
 			if (bodyBytes == null) {
-				sendJson(exchange, 413, "{\"accepted\":false,\"reason\":\"payload_too_large\"}", null);
+				rejectHttp(exchange, 413, "payload_too_large", null);
 				return;
 			}
 
-			String bodyText = new String(bodyBytes, StandardCharsets.UTF_8);
+			bodyBytes = stripUtf8Bom(bodyBytes);
+			String bodyText = stripBomChar(new String(bodyBytes, StandardCharsets.UTF_8));
 			int firstNonWs = indexOfFirstNonWhitespace(bodyText);
 			if (firstNonWs >= 0 && bodyText.charAt(firstNonWs) == '{') {
-				handleJsonBodyAuth(exchange, chat, bodyText);
+				handleJsonBodyAuth(exchange, chat, bodyText.substring(firstNonWs));
 			} else {
 				handlePlainTextBodyAuth(exchange, chat, bodyBytes);
 			}
 		} catch (Exception e) {
 			ArenaOfNations.LOGGER.error("StreamToEarn HTTP body-auth endpoint failed", e);
-			sendJson(exchange, 500, "{\"accepted\":false,\"reason\":\"internal_error\"}", null);
+			rejectHttp(exchange, 500, "internal_error", null);
 		}
 	}
 
@@ -314,7 +318,7 @@ public final class ArenaStreamToEarnHttpBridge {
 			throws IOException {
 		int sepIndex = indexOfSeparator(bodyBytes);
 		if (sepIndex < 0) {
-			sendJson(exchange, 400, jsonAccepted(false, "missing_separator"), null);
+			rejectHttp(exchange, 400, "missing_separator", null);
 			return;
 		}
 
@@ -323,7 +327,7 @@ public final class ArenaStreamToEarnHttpBridge {
 		int payloadLen = bodyBytes.length - payloadOffset;
 
 		if (tokenLen > MAX_COMPAT_TOKEN_BYTES || payloadLen > MAX_COMPAT_PAYLOAD_BYTES) {
-			sendJson(exchange, 413, "{\"accepted\":false,\"reason\":\"payload_too_large\"}", null);
+			rejectHttp(exchange, 413, "payload_too_large", null);
 			return;
 		}
 
@@ -335,7 +339,7 @@ public final class ArenaStreamToEarnHttpBridge {
 		}
 
 		if (tokenLen == 0 || !tokenMatches(tokenBytes)) {
-			sendJson(exchange, 401, "{\"accepted\":false,\"reason\":\"unauthorized\"}", null);
+			rejectHttp(exchange, 401, "unauthorized", null);
 			return;
 		}
 
@@ -346,39 +350,39 @@ public final class ArenaStreamToEarnHttpBridge {
 	private static void handleJsonBodyAuth(HttpExchange exchange, boolean chat, String bodyText) throws IOException {
 		JsonObject obj;
 		try {
-			JsonElement root = JsonParser.parseString(bodyText);
+			JsonElement root = parseCompatJsonRoot(bodyText);
 			if (!root.isJsonObject()) {
-				sendJson(exchange, 400, jsonAccepted(false, "malformed_json"), null);
+				rejectHttp(exchange, 400, "malformed_json", null);
 				return;
 			}
 			obj = root.getAsJsonObject();
 		} catch (JsonParseException e) {
-			sendJson(exchange, 400, jsonAccepted(false, "malformed_json"), null);
+			rejectHttp(exchange, 400, "malformed_json", null);
 			return;
 		}
 
 		String token = readJsonStringField(obj, "token", true);
 		if (token == null) {
-			sendJson(exchange, 400, jsonAccepted(false, "missing_field"), null);
+			rejectHttp(exchange, 400, "missing_field", null);
 			return;
 		}
 		byte[] tokenBytes = token.getBytes(StandardCharsets.UTF_8);
 		if (tokenBytes.length > MAX_COMPAT_TOKEN_BYTES) {
-			sendJson(exchange, 413, "{\"accepted\":false,\"reason\":\"payload_too_large\"}", null);
+			rejectHttp(exchange, 413, "payload_too_large", null);
 			return;
 		}
 		if (token.isEmpty() || !tokenMatches(tokenBytes)) {
-			sendJson(exchange, 401, "{\"accepted\":false,\"reason\":\"unauthorized\"}", null);
+			rejectHttp(exchange, 401, "unauthorized", null);
 			return;
 		}
 
 		String viewerId = readJsonStringField(obj, "viewerId", true);
 		if (viewerId == null || viewerId.isEmpty()) {
-			sendJson(exchange, 400, jsonAccepted(false, "missing_field"), null);
+			rejectHttp(exchange, 400, "missing_field", null);
 			return;
 		}
 		if (containsPayloadSeparator(viewerId)) {
-			sendJson(exchange, 400, jsonAccepted(false, "invalid_field"), null);
+			rejectHttp(exchange, 400, "invalid_field", null);
 			return;
 		}
 
@@ -386,23 +390,23 @@ public final class ArenaStreamToEarnHttpBridge {
 		if (chat) {
 			String message = readJsonStringField(obj, "message", true);
 			if (message == null) {
-				sendJson(exchange, 400, jsonAccepted(false, "missing_field"), null);
+				rejectHttp(exchange, 400, "missing_field", null);
 				return;
 			}
 			if (containsPayloadSeparator(message)) {
-				sendJson(exchange, 400, jsonAccepted(false, "invalid_field"), null);
+				rejectHttp(exchange, 400, "invalid_field", null);
 				return;
 			}
 			payload = viewerId + SEPARATOR + message;
 		} else {
 			Integer coins = readJsonCoinsField(obj);
 			if (coins == null) {
-				sendJson(exchange, 400, jsonAccepted(false, "missing_field"), null);
+				rejectHttp(exchange, 400, "missing_field", null);
 				return;
 			}
 			String eventId = readJsonStringField(obj, "eventId", false);
 			if (eventId != null && !eventId.isEmpty() && containsPayloadSeparator(eventId)) {
-				sendJson(exchange, 400, jsonAccepted(false, "invalid_field"), null);
+				rejectHttp(exchange, 400, "invalid_field", null);
 				return;
 			}
 			if (eventId != null && !eventId.isEmpty()) {
@@ -414,11 +418,83 @@ public final class ArenaStreamToEarnHttpBridge {
 
 		byte[] payloadBytes = payload.getBytes(StandardCharsets.UTF_8);
 		if (payloadBytes.length > MAX_COMPAT_PAYLOAD_BYTES) {
-			sendJson(exchange, 413, "{\"accepted\":false,\"reason\":\"payload_too_large\"}", null);
+			rejectHttp(exchange, 413, "payload_too_large", null);
 			return;
 		}
 
 		respondAcceptResult(exchange, chat, payload);
+	}
+
+	private static void rejectHttp(HttpExchange exchange, int code, String reason, String allowMethod)
+			throws IOException {
+		ArenaStreamToEarnCommands.recordIngressReject(reason);
+		if (code == 405) {
+			sendJson(exchange, code, "{\"accepted\":false,\"reason\":\"method_not_allowed\"}", allowMethod);
+		} else if (code == 413) {
+			sendJson(exchange, code, "{\"accepted\":false,\"reason\":\"payload_too_large\"}", null);
+		} else if (code == 401) {
+			sendJson(exchange, code, "{\"accepted\":false,\"reason\":\"unauthorized\"}", null);
+		} else if (code == 500) {
+			sendJson(exchange, code, "{\"accepted\":false,\"reason\":\"internal_error\"}", null);
+		} else {
+			sendJson(exchange, code, jsonAccepted(false, reason), null);
+		}
+	}
+
+	static byte[] stripUtf8Bom(byte[] body) {
+		if (body != null && body.length >= 3
+				&& (body[0] & 0xFF) == 0xEF
+				&& (body[1] & 0xFF) == 0xBB
+				&& (body[2] & 0xFF) == 0xBF) {
+			return Arrays.copyOfRange(body, 3, body.length);
+		}
+		return body;
+	}
+
+	static String stripBomChar(String text) {
+		if (text != null && !text.isEmpty() && text.charAt(0) == '\uFEFF') {
+			return text.substring(1);
+		}
+		return text;
+	}
+
+	/**
+	 * Parses StreamToEarn JSON bodies, including common UI quirks:
+	 * <ul>
+	 *   <li>unquoted placeholders like {@code "coins": {coins}} (invalid JSON until quoted)</li>
+	 *   <li>double-encoded JSON string from Electron httpBridge</li>
+	 * </ul>
+	 */
+	static JsonElement parseCompatJsonRoot(String bodyText) {
+		String normalized = quoteUnquotedStreamToEarnPlaceholders(bodyText);
+		JsonElement root = JsonParser.parseString(normalized);
+		for (int depth = 0; depth < 2; depth++) {
+			if (!root.isJsonPrimitive() || !root.getAsJsonPrimitive().isString()) {
+				break;
+			}
+			String inner = root.getAsString().trim();
+			if (inner.isEmpty()) {
+				break;
+			}
+			char first = inner.charAt(0);
+			if (first != '{' && first != '"') {
+				break;
+			}
+			root = JsonParser.parseString(quoteUnquotedStreamToEarnPlaceholders(inner));
+		}
+		return root;
+	}
+
+	/**
+	 * Turns {@code "coins": {coins}} into {@code "coins": "{coins}"} so Gson can parse the body.
+	 */
+	static String quoteUnquotedStreamToEarnPlaceholders(String bodyText) {
+		if (bodyText == null || bodyText.isEmpty()) {
+			return bodyText;
+		}
+		return bodyText.replaceAll(
+				"(:\\s*)\\{([A-Za-z][A-Za-z0-9_]*)\\}(\\s*[,}\\]])",
+				"$1\"{$2}\"$3");
 	}
 
 	private static boolean containsPayloadSeparator(String value) {
@@ -438,10 +514,14 @@ public final class ArenaStreamToEarnHttpBridge {
 			return null;
 		}
 		JsonPrimitive primitive = element.getAsJsonPrimitive();
-		if (!primitive.isString()) {
-			return null;
+		if (primitive.isString()) {
+			return primitive.getAsString();
 		}
-		return primitive.getAsString();
+		// Some S2E Play payloads may send numeric ids; coerce to string.
+		if (primitive.isNumber()) {
+			return primitive.getAsString();
+		}
+		return null;
 	}
 
 	/**
@@ -465,9 +545,21 @@ public final class ArenaStreamToEarnHttpBridge {
 		if (raw.isEmpty()) {
 			return null;
 		}
+		// StreamToEarn Play without a live gift leaves placeholders unsubstituted.
+		if (raw.length() >= 3 && raw.charAt(0) == '{' && raw.charAt(raw.length() - 1) == '}') {
+			return 1;
+		}
 		try {
 			return Integer.valueOf(raw);
 		} catch (NumberFormatException e) {
+			try {
+				double asDouble = Double.parseDouble(raw);
+				if (asDouble >= 1.0 && asDouble <= Integer.MAX_VALUE && asDouble == Math.rint(asDouble)) {
+					return (int) asDouble;
+				}
+			} catch (NumberFormatException ignored) {
+				// fall through
+			}
 			return null;
 		}
 	}
@@ -486,7 +578,11 @@ public final class ArenaStreamToEarnHttpBridge {
 
 	private static int indexOfFirstNonWhitespace(String text) {
 		for (int i = 0; i < text.length(); i++) {
-			if (!Character.isWhitespace(text.charAt(i))) {
+			char ch = text.charAt(i);
+			if (ch == '\uFEFF') {
+				continue;
+			}
+			if (!Character.isWhitespace(ch)) {
 				return i;
 			}
 		}

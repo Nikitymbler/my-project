@@ -515,6 +515,8 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ~15–20 последних этапов по коду. Без простыней Java.
 
+89. **S2E gift HTTP 400 fix (31.07)** — S2E Play давал 400 при `"coins": {coins}` / UTF-8 BOM, а `/arena_s2e_status` показывал `ingress=0` (отклонение до счётчиков). Мост: strip BOM, закавычивание `{placeholder}`, unwrap double-JSON, плейсхолдеры coins→1, `HTTP hits chat/gift`, `recordIngressReject`. Тест `ArenaStreamToEarnHttpBridgeJsonTest`. `STREAMTOEARN_SETUP.md` обновлён. Нужен **полный рестарт мира** после сборки.
+
 82. **Remove overlay team-codes hint (31.07)** — убран блок «КОДЫ КОМАНД — НАПИШИ В ЧАТ» из TikTok overlay (HTML/CSS/JS) и поля `teamJoinCodes`/`teamJoinHint` из snapshot. Вступление в команду чатом без изменений. Тест обновлён. `clean build` SUCCESS; Minecraft не запускался.
 
 81. **Core HP regen in BATTLE (31.07)** — +5 HP / 5с после 15с без урона; только активные не-eliminated ядра с HP&gt;0; кап max HP; timestamps в `ArenaCoreState`; тик только из `tickBattle`; диагностика в `/arena_core_combat_status`. Тесты `ArenaCoreRegenTest`. `clean build` SUCCESS; Minecraft не запускался.

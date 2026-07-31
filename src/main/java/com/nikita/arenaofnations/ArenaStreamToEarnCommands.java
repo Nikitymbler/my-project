@@ -29,6 +29,8 @@ public final class ArenaStreamToEarnCommands {
 	private static final AtomicLong acceptedChatCommands = new AtomicLong();
 	private static final AtomicLong acceptedGiftCommands = new AtomicLong();
 	private static final AtomicLong rejectedCommands = new AtomicLong();
+	private static final AtomicLong httpHitsChat = new AtomicLong();
+	private static final AtomicLong httpHitsGift = new AtomicLong();
 	private static final AtomicReference<String> lastResult = new AtomicReference<>("NONE");
 	private static final AtomicReference<String> lastRejectReason = new AtomicReference<>("");
 
@@ -106,6 +108,8 @@ public final class ArenaStreamToEarnCommands {
 		builder.append("  POST /arena/streamtoearn/chat  (body-auth JSON/plain)\n");
 		builder.append("  POST /arena/streamtoearn/gift  (body-auth JSON/plain)\n");
 		builder.append("note: overlay HTTP is separate (default 127.0.0.1:8766); gift/chat are NOT on overlay port\n");
+		builder.append("HTTP hits chat=").append(httpHitsChat.get()).append('\n');
+		builder.append("HTTP hits gift=").append(httpHitsGift.get()).append('\n');
 		builder.append("received chat (ingress)=").append(acceptedChatCommands.get()).append('\n');
 		builder.append("received gift (ingress)=").append(acceptedGiftCommands.get()).append('\n');
 		builder.append("rejected (ingress)=").append(rejectedCommands.get()).append('\n');
@@ -145,6 +149,8 @@ public final class ArenaStreamToEarnCommands {
 		acceptedChatCommands.set(0);
 		acceptedGiftCommands.set(0);
 		rejectedCommands.set(0);
+		httpHitsChat.set(0);
+		httpHitsGift.set(0);
 		lastResult.set("NONE");
 		lastRejectReason.set("");
 	}
@@ -276,10 +282,24 @@ public final class ArenaStreamToEarnCommands {
 				acceptedGiftCommands.incrementAndGet();
 			}
 		} else {
-			lastResult.set("REJECTED");
-			lastRejectReason.set(result.reason() == null ? "неизвестная ошибка" : result.reason());
-			rejectedCommands.incrementAndGet();
+			recordIngressReject(result.reason() == null ? "неизвестная ошибка" : result.reason());
 		}
+	}
+
+	/** Counts every POST to body-auth chat/gift before parsing (even if later 400). */
+	public static void recordHttpHit(boolean chat) {
+		if (chat) {
+			httpHitsChat.incrementAndGet();
+		} else {
+			httpHitsGift.incrementAndGet();
+		}
+	}
+
+	/** HTTP-layer reject (malformed JSON, missing fields, bad token, …) for `/arena_s2e_status`. */
+	public static void recordIngressReject(String reason) {
+		lastResult.set("REJECTED");
+		lastRejectReason.set(reason == null || reason.isEmpty() ? "неизвестная ошибка" : reason);
+		rejectedCommands.incrementAndGet();
 	}
 
 	private static int handleChatCommand(CommandSourceStack source, String payload) {
