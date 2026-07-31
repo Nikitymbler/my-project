@@ -35,7 +35,7 @@ echo POST gift coins=1 ...
 curl.exe -s -m 5 -w "\nHTTP_CODE:%%{http_code}\n" -X POST "http://127.0.0.1:8765/arena/streamtoearn/gift" -H "Content-Type: application/json; charset=utf-8" --data "{\"token\":\"%TOKEN%\",\"viewerId\":\"testUniqueId\",\"coins\":\"1\"}"
 echo.
 echo.
-echo Если HTTP_CODE=202 — Minecraft OK, проблема в настройке StreamToEarn Play.
+echo Если HTTP_CODE=200 или 202 — Minecraft OK, проблема в настройке StreamToEarn Play.
 echo Если HTTP_CODE=400/401 — в игре напиши /arena_s2e_status и пришли last HTTP body=
 echo Если мост не отвечает — мир не открыт или мод старый (нужен git pull + build).
 echo.

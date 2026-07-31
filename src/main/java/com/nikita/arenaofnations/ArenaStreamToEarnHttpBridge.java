@@ -257,7 +257,7 @@ public final class ArenaStreamToEarnHttpBridge {
 					: ArenaStreamToEarnCommands.acceptGiftPayload(payload);
 
 			if (result.accepted()) {
-				sendJson(exchange, 202, jsonAccepted(true, result.reason()), null);
+				sendJson(exchange, 200, jsonAccepted(true, result.reason()), null);
 			} else {
 				sendJson(exchange, 400, jsonAccepted(false, result.reason()), null);
 			}
@@ -583,7 +583,8 @@ public final class ArenaStreamToEarnHttpBridge {
 				: ArenaStreamToEarnCommands.acceptGiftPayload(payload);
 
 		if (result.accepted()) {
-			sendJson(exchange, 202, jsonAccepted(true, result.reason()), null);
+			// StreamToEarn httpBridge treats non-200 as failure toast; 202 looked like an error in UI.
+			sendJson(exchange, 200, jsonAccepted(true, result.reason()), null);
 		} else {
 			sendJson(exchange, 400, jsonAccepted(false, result.reason()), null);
 		}
@@ -684,7 +685,11 @@ public final class ArenaStreamToEarnHttpBridge {
 		String safeReason = reason == null || reason.isBlank()
 				? (accepted ? "queued" : "rejected")
 				: reason;
-		return "{\"accepted\":" + accepted + ",\"reason\":\"" + escapeJson(safeReason) + "\"}";
+		// Include ok/success for StreamToEarn clients that check those fields instead of accepted.
+		return "{\"accepted\":" + accepted
+				+ ",\"ok\":" + accepted
+				+ ",\"success\":" + accepted
+				+ ",\"reason\":\"" + escapeJson(safeReason) + "\"}";
 	}
 
 	private static String escapeJson(String value) {
