@@ -486,6 +486,10 @@ public final class ArenaCoreCombatManager {
 		StringBuilder builder = new StringBuilder();
 		builder.append("Статус боя ядер:\n");
 		builder.append("состояние матча=").append(match.getState()).append('\n');
+		builder.append("coreRegenEnabled=true\n");
+		builder.append("coreRegenAmount=").append((int) ArenaCoreRegenMath.CORE_REGEN_AMOUNT).append('\n');
+		builder.append("coreRegenIntervalTicks=").append(ArenaCoreRegenMath.CORE_REGEN_INTERVAL_TICKS).append('\n');
+		builder.append("coreRegenDamageDelayTicks=").append(ArenaCoreRegenMath.CORE_REGEN_DAMAGE_DELAY_TICKS).append('\n');
 		builder.append("бойцы с целью-бойцом=").append(fighterTargets).append('\n');
 		builder.append("бойцы с целью-ядром=").append(coreTargets).append('\n');
 		builder.append("бойцы рядом с ядром=").append(nearCore).append('\n');
@@ -498,6 +502,8 @@ public final class ArenaCoreCombatManager {
 
 			int defenders = ArenaCoreManager.get().countActiveDefenders(level, country);
 			boolean protectedCore = ArenaCoreManager.get().isCoreProtected(level, country);
+			boolean eliminated = ArenaCoreRescueManager.get().isEliminated(country);
+			ArenaCoreRegenMath.Eval regen = ArenaCoreManager.get().evaluateRegen(country, now);
 
 			builder.append('\n')
 					.append("- ")
@@ -511,6 +517,25 @@ public final class ArenaCoreCombatManager {
 					.append(", защитников=").append(defenders)
 					.append(", статус=").append(protectedCore ? "ЗАЩИЩЕНА" : "УЯЗВИМА")
 					.append(", атакуют=").append(attackers);
+
+			if (match.getActiveCountries().contains(country) || eliminated) {
+				builder.append('\n')
+						.append("  regen: country=").append(country.getCode())
+						.append(" coreHp=").append(Math.round(state.getCurrentHealth()))
+						.append(" coreMaxHp=").append(Math.round(state.getMaxHealth()))
+						.append(" eliminated=").append(eliminated)
+						.append(" lastDamageGameTime=")
+						.append(state.getLastCoreDamageGameTime() < 0L
+								? "-"
+								: String.valueOf(state.getLastCoreDamageGameTime()))
+						.append(" lastRegenGameTime=")
+						.append(state.getLastCoreRegenGameTime() < 0L
+								? "-"
+								: String.valueOf(state.getLastCoreRegenGameTime()))
+						.append(" damageDelayRemainingTicks=").append(regen.damageDelayRemainingTicks())
+						.append(" regenEligible=").append(regen.eligible())
+						.append(" regenBlockedReason=").append(regen.reason().name());
+			}
 		}
 
 		builder.append("\n\nбойцы с core target (первые 10):");

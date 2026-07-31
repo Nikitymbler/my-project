@@ -14,6 +14,9 @@ import net.minecraft.resources.ResourceLocation;
 /**
  * Renders every arena fighter with the shared wide Steve humanoid model.
  * Overhead country flag + health bar replace the vanilla name tag.
+ * <p>
+ * Stable visual path: overhead is drawn every render frame (no LOD/budget gating).
+ * Client FPS helpers may still limit particles elsewhere — not fighter flags.
  */
 public class ArenaFighterRenderer extends MobRenderer<ArenaFighterEntity, PlayerModel<ArenaFighterEntity>> {
 	public ArenaFighterRenderer(EntityRendererProvider.Context context) {
@@ -31,6 +34,7 @@ public class ArenaFighterRenderer extends MobRenderer<ArenaFighterEntity, Player
 			MultiBufferSource buffer,
 			int packedLight) {
 		super.render(entity, entityYaw, partialTick, poseStack, buffer, packedLight);
+		// Always update flag billboard from the current pose — never skip frames / LOD-gate flags.
 		ArenaFighterOverheadRenderer.render(entity, this.entityRenderDispatcher, poseStack, buffer, partialTick);
 	}
 

@@ -5,12 +5,14 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Properties;
 
 import net.fabricmc.loader.api.FabricLoader;
 
 public final class ArenaConfig {
 	private static final String FILE_NAME = "arena_of_nations.properties";
+	private static final String SAFE_OVERLAY_BIND = "127.0.0.1";
 
 	private static ArenaConfig instance = new ArenaConfig();
 
@@ -46,11 +48,13 @@ public final class ArenaConfig {
 	private int overlayHttpPort = 8766;
 	private String overlayBindAddress = "127.0.0.1";
 	private int overlayPort = 8766;
-	private int overlayPollMs = 250;
+	private int overlayPollMs = 750;
+	private boolean overlayHttpsEnabled = true;
+	private String overlayHttpsHostname = "localhost";
 	private boolean overlayPublicEnabled = false;
 	private String overlayPublicBaseUrl = "";
 	private String overlayPublicPath = "/overlay/tiktok";
-	private ArenaHudDisplayMode defaultHudMode = ArenaHudDisplayMode.EXTERNAL;
+	private ArenaHudDisplayMode defaultHudMode = ArenaHudDisplayMode.OFF;
 
 	private ArenaConfig() {
 	}
@@ -87,14 +91,20 @@ public final class ArenaConfig {
 			}
 
 			apply(properties);
+			ArenaReserveRuntimeSettings.get().syncFromConfig(reserveWaveSize);
 			ArenaOfNations.LOGGER.info("Loaded arena config from {}", path);
 		} catch (IOException e) {
 			ArenaOfNations.LOGGER.error("Failed to load arena config, using defaults", e);
 			apply(defaults);
+			ArenaReserveRuntimeSettings.get().syncFromConfig(reserveWaveSize);
 		}
 	}
 
 	private static Path configPath() {
+		String override = System.getProperty("arena.config.path");
+		if (override != null && !override.isBlank()) {
+			return Path.of(override);
+		}
 		return FabricLoader.getInstance().getConfigDir().resolve(FILE_NAME);
 	}
 
@@ -131,11 +141,15 @@ public final class ArenaConfig {
 		properties.setProperty("overlay_http_port", "8766");
 		properties.setProperty("overlay_bind_address", "127.0.0.1");
 		properties.setProperty("overlay_port", "8766");
-		properties.setProperty("overlay_poll_ms", "250");
+		properties.setProperty("overlay_poll_ms", "750");
+		properties.setProperty("overlay_poll_interval_ms", "750");
+		properties.setProperty("overlay_https_enabled", "true");
+		properties.setProperty("overlay_https_hostname", "localhost");
+		// Legacy public tunnel keys — kept disabled; not used by LOCAL_HTTPS_BROWSER mode.
 		properties.setProperty("overlay_public_enabled", "false");
 		properties.setProperty("overlay_public_base_url", "");
 		properties.setProperty("overlay_public_path", "/overlay/tiktok");
-		properties.setProperty("default_hud_mode", "external");
+		properties.setProperty("default_hud_mode", "off");
 		return properties;
 	}
 
@@ -145,7 +159,24 @@ public final class ArenaConfig {
 		breakSeconds = readInt(properties, "break_seconds", 15);
 		joinClosesBeforeEndSeconds = readInt(properties, "join_closes_before_end_seconds", 120);
 		maxWaitingFighters = readInt(properties, "max_waiting_fighters", 10);
-		reserveWaveSize = readInt(properties, "reserve_wave_size", 10);
+		if (properties.containsKey("reserve_wave_size")) {
+			reserveWaveSize = readBoundedInt(
+					properties,
+					"reserve_wave_size",
+					ArenaReserveRuntimeSettings.DEFAULT_BATCH,
+					ArenaReserveRuntimeSettings.MIN_BATCH,
+					ArenaReserveRuntimeSettings.MAX_BATCH);
+		} else if (properties.containsKey("reserve_release_batch")) {
+			// Migration alias for older docs / future key name.
+			reserveWaveSize = readBoundedInt(
+					properties,
+					"reserve_release_batch",
+					ArenaReserveRuntimeSettings.DEFAULT_BATCH,
+					ArenaReserveRuntimeSettings.MIN_BATCH,
+					ArenaReserveRuntimeSettings.MAX_BATCH);
+		} else {
+			reserveWaveSize = ArenaReserveRuntimeSettings.DEFAULT_BATCH;
+		}
 		reserveWaveIntervalTicks = readInt(properties, "reserve_wave_interval_ticks", 40);
 		scoutMinCoins = readInt(properties, "scout_min_coins", 1);
 		warriorMinCoins = readInt(properties, "warrior_min_coins", 10);
@@ -167,9 +198,9 @@ public final class ArenaConfig {
 		overlayEnabled = readBoolean(properties, "overlay_enabled", true);
 		overlayHttpEnabled = readBoolean(properties, "overlay_http_enabled", overlayEnabled);
 		overlayHttpBind = readTrimmedString(properties, "overlay_http_bind", "127.0.0.1");
-		overlayHttpPort = readBoundedInt(properties, "overlay_http_port", 8766, 1024, 65535);
+		overlayHttpPort = readBoundedInt(properties, "overlay_http_port", 8766, 1, 65535);
 		overlayBindAddress = readTrimmedString(properties, "overlay_bind_address", overlayHttpBind);
-		overlayPort = readBoundedInt(properties, "overlay_port", overlayHttpPort, 1024, 65535);
+		overlayPort = readBoundedInt(properties, "overlay_port", overlayHttpPort, 1, 65535);
 		// Prefer explicit overlay_http_* keys; fall back to legacy overlay_* if http_* absent in file.
 		if (!properties.containsKey("overlay_http_bind") && properties.containsKey("overlay_bind_address")) {
 			overlayHttpBind = overlayBindAddress;
@@ -182,13 +213,44 @@ public final class ArenaConfig {
 				overlayHttpPort = overlayPort;
 			}
 		}
-		overlayPollMs = readBoundedInt(properties, "overlay_poll_ms", 250, 100, 5000);
-		overlayPublicEnabled = readBoolean(properties, "overlay_public_enabled", false);
-		overlayPublicBaseUrl = readTrimmedString(properties, "overlay_public_base_url", "");
-		overlayPublicPath = readTrimmedString(properties, "overlay_public_path", "/overlay/tiktok");
+		if (!SAFE_OVERLAY_BIND.equals(overlayHttpBind)) {
+			ArenaOfNations.LOGGER.warn(
+					"Unsafe overlay_http_bind '{}', using fallback {}",
+					overlayHttpBind,
+					SAFE_OVERLAY_BIND);
+			overlayHttpBind = SAFE_OVERLAY_BIND;
+		}
+		if (overlayHttpPort == s2eHttpPort) {
+			ArenaOfNations.LOGGER.warn(
+					"overlay_http_port equals s2e_http_port ({}), forcing overlay_http_port=8766",
+					s2eHttpPort);
+			overlayHttpPort = s2eHttpPort == 8766 ? 8767 : 8766;
+		}
+		// Prefer overlay_poll_interval_ms; fall back to legacy overlay_poll_ms.
+		if (properties.containsKey("overlay_poll_interval_ms")) {
+			overlayPollMs = readBoundedInt(properties, "overlay_poll_interval_ms", 750, 250, 5000);
+		} else {
+			overlayPollMs = readBoundedInt(properties, "overlay_poll_ms", 750, 250, 5000);
+		}
+		overlayHttpsEnabled = readBoolean(properties, "overlay_https_enabled", true);
+		overlayHttpsHostname = readTrimmedString(properties, "overlay_https_hostname", "localhost");
+		if (overlayHttpsHostname.isBlank()
+				|| overlayHttpsHostname.contains(" ")
+				|| overlayHttpsHostname.endsWith(".com")
+				|| overlayHttpsHostname.endsWith(".ru")
+				|| overlayHttpsHostname.contains("/")) {
+			ArenaOfNations.LOGGER.warn(
+					"Invalid overlay_https_hostname '{}', using localhost",
+					overlayHttpsHostname);
+			overlayHttpsHostname = "localhost";
+		}
+		// Public tunnel / Cloudflare / Firebase overlay path is obsolete — force off.
+		overlayPublicEnabled = false;
+		overlayPublicBaseUrl = "";
+		overlayPublicPath = "/overlay/tiktok";
 		defaultHudMode = ArenaHudDisplayMode.parse(
-				readTrimmedString(properties, "default_hud_mode", "external"),
-				ArenaHudDisplayMode.EXTERNAL);
+				readTrimmedString(properties, "default_hud_mode", "off"),
+				ArenaHudDisplayMode.OFF);
 	}
 
 	private static int readInt(Properties properties, String key, int fallback) {
@@ -264,8 +326,80 @@ public final class ArenaConfig {
 		return reserveWaveSize;
 	}
 
+	/**
+	 * Persist live {@code reserveReleaseBatch} as {@code reserve_wave_size} (atomic replace).
+	 * Rejects out-of-range values — no silent clamp.
+	 */
+	public synchronized void setReserveWaveSizeAndSave(int value) throws IOException {
+		if (value < ArenaReserveRuntimeSettings.MIN_BATCH || value > ArenaReserveRuntimeSettings.MAX_BATCH) {
+			throw new IllegalArgumentException(
+					"Допустимое значение: от "
+							+ ArenaReserveRuntimeSettings.MIN_BATCH
+							+ " до "
+							+ ArenaReserveRuntimeSettings.MAX_BATCH
+							+ ".");
+		}
+		reserveWaveSize = value;
+		persistCurrent();
+	}
+
 	public int getReserveWaveIntervalTicks() {
 		return reserveWaveIntervalTicks;
+	}
+
+	private void persistCurrent() throws IOException {
+		Path path = configPath();
+		Files.createDirectories(path.getParent());
+		Properties properties = snapshotProperties();
+		Path tmp = path.resolveSibling(path.getFileName().toString() + ".tmp");
+		try (OutputStream out = Files.newOutputStream(tmp)) {
+			properties.store(out, "Arena of Nations configuration");
+		}
+		try {
+			Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		} catch (IOException atomicFailed) {
+			Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
+	private Properties snapshotProperties() {
+		Properties properties = defaultProperties();
+		properties.setProperty("waiting_seconds", Integer.toString(waitingSeconds));
+		properties.setProperty("battle_seconds", Integer.toString(battleSeconds));
+		properties.setProperty("break_seconds", Integer.toString(breakSeconds));
+		properties.setProperty("join_closes_before_end_seconds", Integer.toString(joinClosesBeforeEndSeconds));
+		properties.setProperty("max_waiting_fighters", Integer.toString(maxWaitingFighters));
+		properties.setProperty("reserve_wave_size", Integer.toString(reserveWaveSize));
+		properties.setProperty("reserve_wave_interval_ticks", Integer.toString(reserveWaveIntervalTicks));
+		properties.setProperty("scout_min_coins", Integer.toString(scoutMinCoins));
+		properties.setProperty("warrior_min_coins", Integer.toString(warriorMinCoins));
+		properties.setProperty("heavy_min_coins", Integer.toString(heavyMinCoins));
+		properties.setProperty("hero_min_coins", Integer.toString(heroMinCoins));
+		properties.setProperty("titan_min_coins", Integer.toString(titanMinCoins));
+		properties.setProperty("core_max_health", Integer.toString(coreMaxHealth));
+		properties.setProperty("core_rescue_seconds", Integer.toString(coreRescueSeconds));
+		properties.setProperty("core_rescue_health_percent", Integer.toString(coreRescueHealthPercent));
+		properties.setProperty("hud_enabled", Boolean.toString(hudEnabled));
+		properties.setProperty("hud_update_ticks", Integer.toString(hudUpdateTicks));
+		properties.setProperty("hud_view_distance", Integer.toString(hudViewDistance));
+		properties.setProperty("viewer_events_enabled", Boolean.toString(viewerEventsEnabled));
+		properties.setProperty("viewer_event_queue_limit", Integer.toString(viewerEventQueueLimit));
+		properties.setProperty("viewer_event_dedup_seconds", Integer.toString(viewerEventDedupSeconds));
+		properties.setProperty("s2e_http_enabled", Boolean.toString(s2eHttpEnabled));
+		properties.setProperty("s2e_http_port", Integer.toString(s2eHttpPort));
+		properties.setProperty("s2e_http_token", s2eHttpToken == null ? "" : s2eHttpToken);
+		properties.setProperty("overlay_enabled", Boolean.toString(overlayEnabled));
+		properties.setProperty("overlay_http_enabled", Boolean.toString(overlayHttpEnabled));
+		properties.setProperty("overlay_http_bind", overlayHttpBind);
+		properties.setProperty("overlay_http_port", Integer.toString(overlayHttpPort));
+		properties.setProperty("overlay_bind_address", overlayBindAddress);
+		properties.setProperty("overlay_port", Integer.toString(overlayPort));
+		properties.setProperty("overlay_poll_ms", Integer.toString(overlayPollMs));
+		properties.setProperty("overlay_poll_interval_ms", Integer.toString(overlayPollMs));
+		properties.setProperty("overlay_https_enabled", Boolean.toString(overlayHttpsEnabled));
+		properties.setProperty("overlay_https_hostname", overlayHttpsHostname);
+		properties.setProperty("default_hud_mode", defaultHudMode.name().toLowerCase(java.util.Locale.ROOT));
+		return properties;
 	}
 
 	public int getScoutMinCoins() {
@@ -371,6 +505,14 @@ public final class ArenaConfig {
 
 	public int getOverlayPollMs() {
 		return overlayPollMs;
+	}
+
+	public boolean isOverlayHttpsEnabled() {
+		return overlayHttpsEnabled;
+	}
+
+	public String getOverlayHttpsHostname() {
+		return overlayHttpsHostname;
 	}
 
 	public boolean isOverlayPublicEnabled() {

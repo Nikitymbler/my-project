@@ -1388,8 +1388,8 @@ final class ArenaTestScenarioCommands {
 		ArenaMatchManager.get().reset(server);
 		ArenaViewerEventManager.get().clearTransientState();
 
-		ArenaViewerEventManager.get().enqueueChat("viewer_ru", "viewer_ru", "!ru", null);
-		ArenaViewerEventManager.get().enqueueChat("viewer_ua", "viewer_ua", "!ua", null);
+		ArenaViewerEventManager.get().enqueueChat("viewer_ru", "viewer_ru", "ru", null);
+		ArenaViewerEventManager.get().enqueueChat("viewer_ua", "viewer_ua", "ua", null);
 
 		DeferredScenario scenario = new DeferredScenario();
 		scenario.name = "viewer_flow";
@@ -1405,7 +1405,7 @@ final class ArenaTestScenarioCommands {
 		ArenaViewerEventManager.get().clearTransientState();
 
 		ArenaViewerEventManager viewers = ArenaViewerEventManager.get();
-		viewers.enqueueChat("viewer_test", "viewer_test", "!ru", null);
+		viewers.enqueueChat("viewer_test", "viewer_test", "ru", null);
 
 		DeferredScenario scenario = new DeferredScenario();
 		scenario.name = "viewer_duplicate";
@@ -1427,9 +1427,9 @@ final class ArenaTestScenarioCommands {
 		ArenaStreamToEarnCommands.clearBridgeCounters();
 
 		ArenaStreamToEarnCommands.AcceptResult chatRu =
-				ArenaStreamToEarnCommands.acceptChatPayload("viewer_s2e|||!ru");
+				ArenaStreamToEarnCommands.acceptChatPayload("viewer_s2e|||ru");
 		ArenaStreamToEarnCommands.AcceptResult chatUa =
-				ArenaStreamToEarnCommands.acceptChatPayload("viewer_enemy|||!ua");
+				ArenaStreamToEarnCommands.acceptChatPayload("viewer_enemy|||ua");
 		ArenaStreamToEarnCommands.AcceptResult giftRu =
 				ArenaStreamToEarnCommands.acceptGiftPayload("viewer_s2e|||1|||s2e_test_ru");
 		ArenaStreamToEarnCommands.AcceptResult giftUa =

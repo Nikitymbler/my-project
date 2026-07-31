@@ -1,6 +1,7 @@
 package com.nikita.arenaofnations.client;
 
 import com.nikita.arenaofnations.ArenaBaseFlagVisibility;
+import com.nikita.arenaofnations.ArenaClientPerfConfig;
 import com.nikita.arenaofnations.ArenaEntities;
 import com.nikita.arenaofnations.ArenaHudCountryState;
 import com.nikita.arenaofnations.ArenaHudSnapshot;
@@ -22,12 +23,14 @@ import net.minecraft.server.packs.resources.ResourceManager;
 public class ArenaOfNationsClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
+		ArenaClientPerfRuntime.register();
 		EntityModelLayerRegistry.registerModelLayer(
 				ArenaFighterModels.HUMANOID_LAYER,
 				ArenaFighterModels::createHumanoidLayer);
 		EntityRendererRegistry.register(ArenaEntities.ARENA_FIGHTER, ArenaFighterRenderer::new);
 		ArenaFighterVisualEffects.register();
 		ArenaRoundHudClient.register();
+		// In-game screen HUD permanently off — browser window chroma overlay is the match HUD.
 		ArenaRoundHudRenderer.register();
 		ArenaBaseMarkerRenderer.register();
 
@@ -65,6 +68,19 @@ public class ArenaOfNationsClient implements ClientModInitializer {
 			dispatcher.register(ClientCommandManager.literal("arena_visual_status_client")
 					.executes(context -> {
 						context.getSource().sendFeedback(Component.literal(buildClientVisualStatus()));
+						return 1;
+					}));
+			dispatcher.register(ClientCommandManager.literal("arena_client_perf")
+					.executes(context -> {
+						context.getSource().sendFeedback(Component.literal(ArenaClientPerfRuntime.statusReport()));
+						return 1;
+					}));
+			dispatcher.register(ClientCommandManager.literal("arena_client_config_reload")
+					.executes(context -> {
+						ArenaClientPerfConfig.reload();
+						ArenaClientPerfRuntime.onConfigReloaded();
+						context.getSource().sendFeedback(
+								Component.literal("Клиентские настройки Arena of Nations перезагружены."));
 						return 1;
 					}));
 		});

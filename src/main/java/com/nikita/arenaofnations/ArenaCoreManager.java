@@ -164,14 +164,93 @@ public final class ArenaCoreManager {
 		// Physical visuals change only on activate / eliminate / rescue restore / full reset.
 
 		float actual = Math.max(0.0F, before - health);
-		if (actual > 0.0F && attackerCountry != null) {
-			coreDamageDealt.merge(attackerCountry, (double) actual, Double::sum);
+		if (actual > 0.0F) {
+			long gameTime = resolveGameTime(server);
+			if (gameTime >= 0L) {
+				state.noteActualDamage(gameTime);
+			}
+			if (attackerCountry != null) {
+				coreDamageDealt.merge(attackerCountry, (double) actual, Double::sum);
+			}
 		}
 
 		if (before > 0.0F && health <= 0.0F) {
 			ArenaCoreRescueManager.get().onCoreDestroyed(server, country);
 		}
 		return health;
+	}
+
+	private static long resolveGameTime(MinecraftServer server) {
+		if (server == null) {
+			return -1L;
+		}
+		ServerLevel fightLevel = ArenaSpawns.resolveFightLevel(server, server.overworld());
+		if (fightLevel == null) {
+			return -1L;
+		}
+		return fightLevel.getGameTime();
+	}
+
+	/**
+	 * Once per server tick during BATTLE — regenerates eligible active cores.
+	 * No catch-up heals; WAITING/BREAK/IDLE never call this.
+	 *
+	 * @return number of countries that gained HP this tick
+	 */
+	public int tickCoreRegen(MinecraftServer server) {
+		if (server == null) {
+			return 0;
+		}
+		if (ArenaMatchManager.get().getState() != ArenaMatchState.BATTLE) {
+			return 0;
+		}
+
+		ServerLevel fightLevel = ArenaSpawns.resolveFightLevel(server, server.overworld());
+		if (fightLevel == null) {
+			return 0;
+		}
+		long gameTime = fightLevel.getGameTime();
+		int healedCountries = 0;
+
+		for (Country country : ArenaMatchManager.get().getActiveCountries()) {
+			ArenaCoreRegenMath.Eval eval = evaluateRegen(country, gameTime);
+			if (!eval.eligible()) {
+				continue;
+			}
+			ArenaCoreState state = states.get(country);
+			float before = state.getCurrentHealth();
+			float after = state.regenerate(eval.healAmount());
+			if (after > before) {
+				state.noteRegen(gameTime);
+				healedCountries++;
+			}
+		}
+		return healedCountries;
+	}
+
+	public ArenaCoreRegenMath.Eval evaluateRegen(Country country, long gameTime) {
+		ArenaMatchManager match = ArenaMatchManager.get();
+		boolean battle = match.getState() == ArenaMatchState.BATTLE;
+		boolean active = country != null && match.getActiveCountries().contains(country);
+		boolean eliminated = country != null && ArenaCoreRescueManager.get().isEliminated(country);
+		ArenaCoreState state = country == null ? null : states.get(country);
+		boolean present = state != null && state.isActive();
+		boolean destroyed = state == null || state.isDestroyed() || state.getCurrentHealth() <= 0.0F;
+		float hp = state == null ? 0.0F : state.getCurrentHealth();
+		float max = state == null ? 0.0F : state.getMaxHealth();
+		long lastDamage = state == null ? -1L : state.getLastCoreDamageGameTime();
+		long lastRegen = state == null ? -1L : state.getLastCoreRegenGameTime();
+		return ArenaCoreRegenMath.evaluate(
+				battle,
+				active,
+				eliminated,
+				present,
+				destroyed,
+				hp,
+				max,
+				gameTime,
+				lastDamage,
+				lastRegen);
 	}
 
 	public float heal(MinecraftServer server, Country country, float amount) {

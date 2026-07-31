@@ -93,6 +93,7 @@ public final class ArenaFighterOverheadRenderer {
 
 		poseStack.pushPose();
 		poseStack.translate(0.0D, indicatorY, 0.0D);
+		// Fresh camera orientation each frame — stable billboard follow during movement.
 		poseStack.mulPose(new Quaternionf(dispatcher.cameraOrientation()));
 		poseStack.scale(-scale, -scale, scale);
 

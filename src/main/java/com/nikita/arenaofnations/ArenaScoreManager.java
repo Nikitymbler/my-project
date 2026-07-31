@@ -9,8 +9,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 
 /**
- * Facade over {@link ArenaScoreSavedData} stored in the current world's overworld.
- * Does not keep a separate in-memory score table that could diverge from disk.
+ * Facade over {@link ArenaScoreSavedData}. Score points, roundWins, and fighter-round record
+ * are independent statistics.
  */
 public final class ArenaScoreManager {
 	private static final int POINTS_HOLD = 1;
@@ -40,6 +40,38 @@ public final class ArenaScoreManager {
 		return data == null ? 0 : data.getScore(country);
 	}
 
+	public static int getRoundWins(MinecraftServer server, Country country) {
+		ArenaScoreSavedData data = getData(server);
+		return data == null ? 0 : data.getRoundWins(country);
+	}
+
+	public static int getFighterRoundRecordCount(MinecraftServer server) {
+		ArenaScoreSavedData data = getData(server);
+		return data == null ? 0 : data.getFighterRoundRecordCount();
+	}
+
+	public static Country getFighterRoundRecordCountry(MinecraftServer server) {
+		ArenaScoreSavedData data = getData(server);
+		return data == null ? null : data.getFighterRoundRecordCountry();
+	}
+
+	public static String getFighterRoundRecordCountryId(MinecraftServer server) {
+		ArenaScoreSavedData data = getData(server);
+		return data == null ? "" : data.getFighterRoundRecordCountryId();
+	}
+
+	/**
+	 * Updates persistent fighter-round record if {@code count} is strictly greater.
+	 * @return true when the saved record changed
+	 */
+	public static boolean tryUpdateFighterRoundRecord(MinecraftServer server, Country country, int count) {
+		ArenaScoreSavedData data = getData(server);
+		if (data == null) {
+			return false;
+		}
+		return data.tryUpdateFighterRoundRecord(country, count);
+	}
+
 	public static void resetAll(MinecraftServer server) {
 		ArenaScoreSavedData data = getData(server);
 		if (data == null) {
@@ -48,12 +80,41 @@ public final class ArenaScoreManager {
 		data.resetAll();
 	}
 
+	public static void resetScorePoints(MinecraftServer server) {
+		ArenaScoreSavedData data = getData(server);
+		if (data != null) {
+			data.resetScorePoints();
+		}
+	}
+
+	public static void resetRoundWins(MinecraftServer server) {
+		ArenaScoreSavedData data = getData(server);
+		if (data != null) {
+			data.resetRoundWins();
+		}
+	}
+
+	public static void resetFighterRoundRecord(MinecraftServer server) {
+		ArenaScoreSavedData data = getData(server);
+		if (data != null) {
+			data.resetFighterRoundRecord();
+		}
+	}
+
 	public static int addPoints(MinecraftServer server, Country country, int points) {
 		ArenaScoreSavedData data = getData(server);
 		if (data == null) {
 			return 0;
 		}
 		return data.addPoints(country, points);
+	}
+
+	public static int addRoundWin(MinecraftServer server, Country country) {
+		ArenaScoreSavedData data = getData(server);
+		if (data == null || country == null) {
+			return 0;
+		}
+		return data.addRoundWin(country);
 	}
 
 	public static List<Country> rankedCountries(MinecraftServer server) {
@@ -67,12 +128,22 @@ public final class ArenaScoreManager {
 		return ranked;
 	}
 
+	public static List<ArenaTopCountriesRanking.Entry> topByRoundWins(MinecraftServer server, int limit) {
+		return ArenaTopCountriesRanking.rank(
+				c -> getRoundWins(server, c),
+				c -> getScore(server, c),
+				limit);
+	}
+
 	public static void awardHold(MinecraftServer server, Country country) {
 		int total = addPoints(server, country, POINTS_HOLD);
+		int wins = addRoundWin(server, country);
 		broadcast(server, Component.literal(
 				country.getDisplayName() + " получает " + POINTS_HOLD + " очко за удержание арены."));
 		broadcast(server, Component.literal(
-				"Всего очков у " + country.getDisplayName() + ": " + total));
+				"Всего очков у " + country.getDisplayName() + ": " + total
+						+ " · побед раундов: " + wins));
+		ArenaRoundHudSync.pushNow(server);
 	}
 
 	public static void awardBattleWin(MinecraftServer server, Country country, int participantCount) {
@@ -82,6 +153,7 @@ public final class ArenaScoreManager {
 
 		int points = participantCount >= 3 ? POINTS_MULTI_WIN : POINTS_DUEL_WIN;
 		int total = addPoints(server, country, points);
+		int wins = addRoundWin(server, country);
 
 		if (points == POINTS_MULTI_WIN) {
 			broadcast(server, Component.literal(
@@ -92,7 +164,9 @@ public final class ArenaScoreManager {
 		}
 
 		broadcast(server, Component.literal(
-				"Всего очков у " + country.getDisplayName() + ": " + total));
+				"Всего очков у " + country.getDisplayName() + ": " + total
+						+ " · побед раундов: " + wins));
+		ArenaRoundHudSync.pushNow(server);
 	}
 
 	public static String buildScoresText(MinecraftServer server) {
@@ -104,8 +178,19 @@ public final class ArenaScoreManager {
 					.append(". ")
 					.append(country.getDisplayName())
 					.append(" — ")
-					.append(getScore(server, country));
+					.append(getScore(server, country))
+					.append(" (побед: ")
+					.append(getRoundWins(server, country))
+					.append(')');
 			place++;
+		}
+		Country recordCountry = getFighterRoundRecordCountry(server);
+		int recordCount = getFighterRoundRecordCount(server);
+		builder.append("\nРекорд бойцов за раунд: ");
+		if (recordCountry == null || recordCount <= 0) {
+			builder.append("—");
+		} else {
+			builder.append(recordCountry.getDisplayName()).append(" — ").append(recordCount);
 		}
 		return builder.toString();
 	}

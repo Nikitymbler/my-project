@@ -48,6 +48,15 @@ final class ArenaVisualStatusCommands {
 		out.append("round_participants=").append(participants.size()).append('\n');
 		out.append("snapshot_countries=").append(snapshot.countries().size()).append('\n');
 		out.append("base_flag_source=ArenaBaseMarkerRenderer (client world billboard, not entity)\n");
+		out.append("base_name_source=Country.getDisplayName() above flag (separate world billboard, SEE_THROUGH)\n");
+		out.append(ArenaBaseFlagVisibility.formatDiagnostics(snapshot)).append('\n');
+		out.append("baseCountryLabelsExpected=see client /arena_base_markers status\n");
+		out.append("baseCountryLabelsRenderAttempted=see client /arena_base_markers status\n");
+		out.append("baseCountryLabelsActuallyDrawn=see client /arena_base_markers status\n");
+		out.append("lastRenderedCountryLabels=see client /arena_base_markers status\n");
+		out.append("lastLabelWorldPositionRU=see client /arena_base_markers status\n");
+		out.append("lastLabelDistanceRU=see client /arena_base_markers status\n");
+		out.append("lastLabelRenderError=see client /arena_base_markers status\n");
 		out.append("fighter_flag_render_paths=1 (ArenaFighterRenderer->ArenaFighterOverheadRenderer)\n");
 		out.append("fighter_model=PlayerModel(wide_steve_4px_arms)\n");
 		out.append("fighter_shared_skin=arena_of_nations:textures/entity/fighter/medieval_soldier.png\n");

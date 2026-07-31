@@ -2,8 +2,10 @@ package com.nikita.arenaofnations;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import net.minecraft.ChatFormatting;
 
@@ -35,6 +37,18 @@ public enum Country {
 	public static final int SUPPORTED_COUNT = 20;
 	public static final List<Country> ALL = Collections.unmodifiableList(Arrays.asList(values()));
 
+	/** Exact id/code lookup — avoids per-call linear scan when already normalized. */
+	private static final Map<String, Country> BY_KEY;
+
+	static {
+		Map<String, Country> map = new HashMap<>();
+		for (Country country : values()) {
+			map.put(country.id, country);
+			map.put(country.code.toLowerCase(Locale.ROOT), country);
+		}
+		BY_KEY = Map.copyOf(map);
+	}
+
 	private final String id;
 	private final String code;
 	private final String displayName;
@@ -51,7 +65,6 @@ public enum Country {
 		return id;
 	}
 
-	/** Two-letter UI / HUD code (stable, not ordinal). */
 	public String getCode() {
 		return code;
 	}
@@ -89,13 +102,12 @@ public enum Country {
 		if (raw == null || raw.isBlank()) {
 			return null;
 		}
-		String normalized = raw.trim().toLowerCase(Locale.ROOT);
-		for (Country country : values()) {
-			if (country.id.equals(normalized) || country.code.equalsIgnoreCase(normalized)) {
-				return country;
-			}
+		Country exact = BY_KEY.get(raw);
+		if (exact != null) {
+			return exact;
 		}
-		return null;
+		String normalized = raw.trim().toLowerCase(Locale.ROOT);
+		return BY_KEY.get(normalized);
 	}
 
 	public static List<String> allIds() {

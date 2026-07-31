@@ -42,6 +42,28 @@ tasks.named('test', Test).configure {
 	useJUnitPlatform()
 }
 
+tasks.register('validatePowerShellScripts', Exec) {
+	workingDir = projectDir
+	commandLine 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/overlay-https/Validate-PowerShellScripts.ps1'
+}
+
+tasks.register('testOverlaySetupResult', Exec) {
+	workingDir = projectDir
+	commandLine 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/overlay-https/Test-OverlaySetupResult.ps1'
+}
+
+tasks.register('verifyWindowsMySsl', JavaExec) {
+	group = 'verification'
+	description = 'Java-side Windows-MY SSLContext verification (CurrentUser\\My)'
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.nikita.arenaofnations.ArenaOverlayHttpsMaterial'
+	dependsOn classes
+}
+
+tasks.named('check').configure {
+	dependsOn 'validatePowerShellScripts', 'testOverlaySetupResult'
+}
+
 processResources {
 	def version = project.version
 	inputs.property "version", version

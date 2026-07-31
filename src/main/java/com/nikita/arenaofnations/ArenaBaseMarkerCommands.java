@@ -74,6 +74,7 @@ final class ArenaBaseMarkerCommands {
 				+ "arena_center_valid=" + snapshot.arenaCenterValid() + '\n'
 				+ "max_render_distance=120\n"
 				+ "legacy_textdisplay=disabled\n"
-				+ "legacy_armorstand_labels=disabled";
+				+ "legacy_armorstand_labels=disabled\n"
+				+ ArenaBaseFlagVisibility.formatDiagnostics(snapshot);
 	}
 }

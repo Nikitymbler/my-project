@@ -1,0 +1,65 @@
+Arena of Nations — RELEASE NOTES
+Версия: v1.0-stream-tested
+Дата фиксации: 31 июля 2026
+
+Проверено на реальном TikTok LIVE-стриме.
+
+
+СОСТАВ РЕЛИЗА
+-------------
+- arena_of_nations-1.0.0.jar          — мод Fabric (Minecraft 1.21)
+- START_ARENA.cmd                     — запуск клиента
+- OPEN_OVERLAY_WINDOW.cmd             — окно chroma overlay 1080×1920
+- OPEN_OVERLAY.cmd                    — preview overlay
+- OVERLAY_README_RU.txt               — инструкция overlay / chroma
+- PROJECT_STATUS.md                   — статус проекта по коду
+- config/arena_of_nations.properties.example — пример конфига (без секретов)
+- config/STREAMTOEARN_SETUP.md        — настройка StreamToEarn HTTP
+- config/gradle.properties.reference  — справочно
+- scripts/SETUP_LOCAL_OVERLAY_HTTPS.cmd
+- scripts/VERIFY_LOCAL_OVERLAY_HTTPS.cmd
+- RELEASE_NOTES_RU.txt                — этот файл
+
+
+ПОДТВЕРЖДЁННЫЕ ФУНКЦИИ (реальный TikTok LIVE-стрим)
+---------------------------------------------------
+- StreamToEarn: приём событий работает
+- Подарки принимаются и превращаются в бойцов / резерв
+- Страны вступают в раунд (WAITING → BATTLE)
+- Бойцы и резерв / волны работают
+- Раунды проходят (WAITING / BATTLE / BREAK)
+- Rescue и elimination работают
+- Выбывшие страны: карточки browser overlay исчезают сразу
+- Browser overlay в TikTok LIVE Studio (захват окна)
+- Chroma key цвет: #FF00FF
+- Названия активных стран над флагами баз в мире
+- In-game Arena HUD отключён (информация в browser overlay)
+- HTTPS overlay: https://localhost:8766/overlay/tiktok
+
+
+ТЕХНИЧЕСКИЕ ЗАМЕТКИ
+-------------------
+Платформа: Minecraft 1.21 / Fabric / Java 21
+Mod ID: arena_of_nations
+Overlay порт: 8766 (whitelist HTTPS)
+StreamToEarn HTTP порт: 8765 (отдельно)
+Chroma: #FF00FF (не зелёный)
+
+Сертификаты и приватные ключи в релиз НЕ входят.
+Токен StreamToEarn в example-конфиге пустой — задайте локально.
+
+
+УСТАНОВКА (кратко)
+------------------
+1. Положить arena_of_nations-1.0.0.jar в mods/
+2. Один раз: scripts\SETUP_LOCAL_OVERLAY_HTTPS.cmd
+3. START_ARENA.cmd → открыть мир
+4. OPEN_OVERLAY_WINDOW.cmd
+5. TikTok LIVE Studio: захват окна + chroma #FF00FF
+6. Настроить StreamToEarn по config\STREAMTOEARN_SETUP.md
+
+
+СБОРКА ПРИ ФИКСАЦИИ
+-------------------
+gradlew.bat clean build → BUILD SUCCESSFUL
+Игровой код при упаковке релиза не изменялся.

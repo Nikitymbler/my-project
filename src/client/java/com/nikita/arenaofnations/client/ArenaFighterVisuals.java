@@ -1,11 +1,13 @@
 package com.nikita.arenaofnations.client;
 
+import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.nikita.arenaofnations.ArenaFighterEntity;
 import com.nikita.arenaofnations.ArenaOfNations;
+import com.nikita.arenaofnations.Country;
 import com.nikita.arenaofnations.FighterTier;
 
 import net.minecraft.client.Minecraft;
@@ -13,12 +15,12 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 
 /**
- * Central client-side look-up for the shared fighter skin and visual-only scale.
- * All fighters use one skin; no per-country skin variants in live render path.
+ * Central client-side look-up for fighter skins and visual-only scale.
+ * Live path uses one shared medieval skin for every country (immutable country→texture map).
  */
 public final class ArenaFighterVisuals {
 	/**
-	 * Preferred shared warrior skin. Missing → vanilla wide Steve.
+	 * Preferred shared warrior skin. Missing → still returned (diagnostics log once).
 	 */
 	public static final ResourceLocation SHARED_SKIN =
 			ArenaOfNations.id("textures/entity/fighter/medieval_soldier.png");
@@ -27,16 +29,35 @@ public final class ArenaFighterVisuals {
 	public static final String RENDERER_CLASS_NAME = ArenaFighterRenderer.class.getSimpleName();
 	public static final String MODEL_CLASS_NAME = ArenaFighterHumanoidModel.class.getSimpleName();
 
+	/** Immutable countryId → skin ResourceLocation (built once at class load). */
+	private static final Map<Country, ResourceLocation> SKIN_BY_COUNTRY;
+
 	/** Maps requested custom texture → resolved texture. */
 	private static final Map<ResourceLocation, ResourceLocation> TEXTURE_RESOLUTION_CACHE =
 			new ConcurrentHashMap<>();
 	private static final AtomicBoolean MISSING_SKIN_LOGGED = new AtomicBoolean(false);
 
+	static {
+		EnumMap<Country, ResourceLocation> map = new EnumMap<>(Country.class);
+		for (Country country : Country.values()) {
+			// Live look: shared skin for all countries (country colours/flags remain separate).
+			map.put(country, SHARED_SKIN);
+		}
+		SKIN_BY_COUNTRY = Map.copyOf(map);
+	}
+
 	private ArenaFighterVisuals() {
 	}
 
 	public static ResourceLocation texture(ArenaFighterEntity entity) {
-		return sharedTexture();
+		Country country = entity != null ? entity.getArenaCountry() : Country.RU;
+		return textureForCountry(country);
+	}
+
+	public static ResourceLocation textureForCountry(Country country) {
+		Country resolved = country != null ? country : Country.RU;
+		ResourceLocation requested = SKIN_BY_COUNTRY.getOrDefault(resolved, SHARED_SKIN);
+		return TEXTURE_RESOLUTION_CACHE.computeIfAbsent(requested, ArenaFighterVisuals::resolveTexture);
 	}
 
 	/** Single skin resource used by every fighter. */
@@ -58,7 +79,6 @@ public final class ArenaFighterVisuals {
 					"Missing fighter skin resource: {}. Place original Mullraugh PNG at this exact id.",
 					custom);
 		}
-		// Do not silently switch to Steve/Alex during diagnostics.
 		return custom;
 	}
 

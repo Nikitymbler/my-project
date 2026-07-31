@@ -290,7 +290,7 @@ public final class ArenaStreamToEarnCommands {
 		}
 		source.sendFailure(Component.literal(
 				"S2E chat отклонён: " + result.reason()
-						+ "\nПример: /arena_s2e_chat user123|||!ru"));
+						+ "\nПример: /arena_s2e_chat user123|||ru"));
 		return 0;
 	}
 
@@ -310,7 +310,7 @@ public final class ArenaStreamToEarnCommands {
 	private static int showChatHelp(CommandSourceStack source) {
 		source.sendSuccess(() -> Component.literal(
 				"Использование: /arena_s2e_chat <viewerId>|||<message>\n"
-						+ "Пример: /arena_s2e_chat user123|||!ru"), false);
+						+ "Пример: /arena_s2e_chat user123|||ru  (или: команда ru)"), false);
 		return 1;
 	}
 

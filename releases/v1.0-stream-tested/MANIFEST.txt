@@ -1,0 +1,24 @@
+Arena of Nations release manifest
+version=v1.0-stream-tested
+built=2026-07-31
+jar=arena_of_nations-1.0.0.jar
+jar_source=build/libs/arena_of_nations-1.0.0.jar
+build=clean build BUILD SUCCESSFUL
+game_code_changed_during_packaging=false
+secrets_included=false
+certificates_included=false
+
+files:
+  arena_of_nations-1.0.0.jar
+  START_ARENA.cmd
+  OPEN_OVERLAY_WINDOW.cmd
+  OPEN_OVERLAY.cmd
+  OVERLAY_README_RU.txt
+  PROJECT_STATUS.md
+  RELEASE_NOTES_RU.txt
+  MANIFEST.txt
+  config/arena_of_nations.properties.example
+  config/STREAMTOEARN_SETUP.md
+  config/gradle.properties.reference
+  scripts/SETUP_LOCAL_OVERLAY_HTTPS.cmd
+  scripts/VERIFY_LOCAL_OVERLAY_HTTPS.cmd

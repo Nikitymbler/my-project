@@ -47,6 +47,16 @@ final class ArenaMatchCommands {
 		dispatcher.register(Commands.literal("arena_config_reload")
 				.executes(ArenaMatchCommands::reloadCommand));
 
+		dispatcher.register(Commands.literal("arena_config_status")
+				.requires(source -> source.hasPermission(2))
+				.executes(ArenaMatchCommands::configStatusCommand));
+
+		dispatcher.register(Commands.literal("arena_reserve_batch")
+				.requires(source -> source.hasPermission(2))
+				.executes(ArenaMatchCommands::reserveBatchStatusCommand)
+				.then(Commands.argument("batch", IntegerArgumentType.integer())
+						.executes(ArenaMatchCommands::reserveBatchSetCommand)));
+
 		dispatcher.register(Commands.literal("arena_damage_stats")
 				.executes(ArenaMatchCommands::damageStatsCommand));
 
@@ -113,6 +123,51 @@ final class ArenaMatchCommands {
 	private static int reloadCommand(CommandContext<CommandSourceStack> context) {
 		ArenaConfig.get().reload();
 		context.getSource().sendSuccess(() -> Component.literal("Конфигурация арены перезагружена."), false);
+		return 1;
+	}
+
+	private static int reserveBatchStatusCommand(CommandContext<CommandSourceStack> context) {
+		ArenaReserveRuntimeSettings settings = ArenaReserveRuntimeSettings.get();
+		context.getSource().sendSuccess(
+				() -> Component.literal(
+						"Размер выпуска резерва: "
+								+ settings.getReserveReleaseBatch()
+								+ " бойцов за волну\nДопустимый диапазон: "
+								+ ArenaReserveRuntimeSettings.MIN_BATCH
+								+ "-"
+								+ ArenaReserveRuntimeSettings.MAX_BATCH),
+				false);
+		return 1;
+	}
+
+	private static int reserveBatchSetCommand(CommandContext<CommandSourceStack> context) {
+		int batch = IntegerArgumentType.getInteger(context, "batch");
+		ArenaReserveRuntimeSettings.ApplyResult result = ArenaReserveRuntimeSettings.get().apply(
+				batch,
+				ArenaReserveRuntimeSettings.ChangedBy.COMMAND);
+		if (!result.success()) {
+			context.getSource().sendFailure(Component.literal(result.message()));
+			return 0;
+		}
+		context.getSource().sendSuccess(
+				() -> Component.literal(
+						"Размер следующего выпуска резерва изменён на "
+								+ result.reserveReleaseBatch()
+								+ " бойцов на страну."),
+				false);
+		return 1;
+	}
+
+	private static int configStatusCommand(CommandContext<CommandSourceStack> context) {
+		ArenaConfig config = ArenaConfig.get();
+		ArenaReserveRuntimeSettings settings = ArenaReserveRuntimeSettings.get();
+		StringBuilder report = new StringBuilder();
+		report.append("Arena config status:\n");
+		report.append("reserve_wave_size=").append(config.getReserveWaveSize()).append('\n');
+		report.append("reserve_wave_interval_ticks=").append(config.getReserveWaveIntervalTicks()).append('\n');
+		report.append("activeFightersLimit=").append(settings.getActiveFightersLimit()).append('\n');
+		report.append(settings.buildDiagnosticLines());
+		context.getSource().sendSuccess(() -> Component.literal(report.toString()), false);
 		return 1;
 	}
 

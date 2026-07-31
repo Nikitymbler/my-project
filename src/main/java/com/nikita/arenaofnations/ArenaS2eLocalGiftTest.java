@@ -64,11 +64,11 @@ public final class ArenaS2eLocalGiftTest {
 		this.stage = Stage.CHAT;
 
 		ArenaStreamToEarnCommands.AcceptResult chat =
-				ArenaStreamToEarnCommands.acceptChatPayload(VIEWER + "|||!ru");
+				ArenaStreamToEarnCommands.acceptChatPayload(VIEWER + "|||ru");
 		if (!chat.accepted()) {
 			return finishFail(server, "CHAT_INGRESS", "chat rejected: " + chat.reason());
 		}
-		return "s2e_local_gift started: ingress chat !ru → gift coins=10 → dedup.";
+		return "s2e_local_gift started: ingress chat ru → gift coins=10 → dedup.";
 	}
 
 	public void tick(MinecraftServer server) {

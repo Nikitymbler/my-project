@@ -1,7 +1,7 @@
 ﻿# Arena of Nations — Project Status
 
 Документ состояния разработки. Источник правды — **текущий код**, не переписка.
-Дата снимка: 30 июля 2026.
+Дата снимка: 31 июля 2026.
 
 ---
 
@@ -110,7 +110,7 @@
 - В геймплее спавнится только один класс: `FighterTier.SCOUT` с display **«Боец»**.
 - `/arena_gift <country> <coins>`: `coins >= 1` создаёт **ровно coins бойцов**.
 - Подарки не капятся лимитом живых: каждый gift превращается в `coins` pending-бойцов в резерве.
-- Спавн на поле идёт волнами в `BATTLE`: `reserve_wave_size` за тик волны (по умолчанию 10).
+- Спавн на поле идёт волнами в `BATTLE`: `reserveReleaseBatch` / `reserve_wave_size` за тик волны (по умолчанию **10**, live 1–100).
 
 Параметры единственного класса (SCOUT-профиль из `ArenaFighterBalance`):
 
@@ -273,6 +273,18 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ---
 
+## 9b. CLIENT FPS OPTIMIZATION
+
+Клиентские helpers для частиц/config сохранены, но **визуал флагов над бойцами снова стабильный**:
+
+- Renderer: **`ArenaFighterRenderer`** — overhead flags **каждый render frame** (без LOD/budget gating).
+- Причина отката gate: LOD NEAR-only + max 20 nameplates давали мерцание флагов в движении.
+- Vanilla frustum culling; без custom distance `shouldRender` на бойцах.
+- Particle budget / `arena_of_nations-client.properties` / `/arena_client_perf` остаются для частиц и диагностики.
+- Копья и shared skin без изменений.
+
+---
+
 ## 10. Раундовая система
 
 `ArenaMatchState`: `IDLE` → `WAITING_FOR_OPPONENT` → `BATTLE` → `BREAK` → …
@@ -290,13 +302,14 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ## 11. Резерв
 
-Внутри `ArenaMatchManager` (отдельного `ArenaReserve*` нет):
+Внутри `ArenaMatchManager` + live-настройка `ArenaReserveRuntimeSettings`:
 
 - `/arena_gift <country> <coins>` создаёт `coins` pending-бойцов (класс «Боец»); каждый pending проходит через тот же лимит поля/резерва.
-- Ограничение `max_waiting_fighters` больше не режет число живых на поле в live-режиме.
-- Переполнение gift → `Queue<PendingFighter>` резерва страны.
-- В BATTLE каждые `reserve_wave_interval_ticks` (default **40**) выпускается до `reserve_wave_size` (default **10**) на страну.
-- Формула выпуска волны в `releaseReserveWaves`: `min(reserve_wave_size, queueSize)`; волны идут только в `BATTLE`.
+- Ограничение `max_waiting_fighters` в конфиге не используется как live-кап поля.
+- Переполнение gift → `Queue<PendingFighter>` резерва страны (подарки всегда в резерв, в т.ч. при полном поле WAITING).
+- Волны резерва идут в **WAITING** и **BATTLE** каждые `reserve_wave_interval_ticks` (default **40`), до `reserveReleaseBatch` (`reserve_wave_size`, default **10**, диапазон **1–100`) на страну.
+- **WAITING:** жёсткий лимит `WAITING_FIELD_LIMIT = 25` живых бойцов ожидающей команды на поле (`ArenaReserveReleaseMath`). Считаются только живые entities на поле; не gifts / reserve / fightersSentThisRound. Формула: `actualRelease = min(batch, reserve, availableActiveSlots, waitingRemainingSlots)`; последняя волна урезается; при 25 на поле волны выпускают 0. При старте BATTLE лимит снимается, уже вышедшие бойцы остаются и получают боевой AI.
+- **BATTLE:** `actualRelease = min(configuredBatch, reserve, availableActiveSlots)`; live-field без капа живых (`availableActiveSlots = Integer.MAX_VALUE`). Batch live из `ArenaReserveRuntimeSettings`. Резерв уменьшается только на успешно заспавненных.
 - Очистка: timeout waiting, конец боя, elimination, round reset.
 - Проверка: `/arena_test_scenario reserve`.
 
@@ -308,6 +321,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 - Позиции (`ArenaCountryBaseLayout` / `ArenaPositions`): **slot-based** — core ring **58**, approach **52**, spawn zone **46**; pedestal ниже ядра. Старые cardinal RU/UA/KZ/BY координаты **не используются**.
 - HP ядра: `core_max_health` default **200**; DAMAGED ≤50%.
+- **Регенерация ядра (только BATTLE):** `ArenaCoreRegenMath` + timestamps в `ArenaCoreState` (`lastCoreDamageGameTime`, `lastCoreRegenGameTime`). Тик `ArenaCoreManager.tickCoreRegen` из `tickBattle`. Условия: активный участник (`getActiveCountries`), не eliminated, ядро active, HP &gt; 0 и &lt; max, ≥15с (300 ticks) без фактического урона, интервал 5с (100 ticks), +5 HP с капом `min(max, hp+5)`. Разрушенное ядро (HP≤0) не возрождается. WAITING/BREAK/IDLE не вызывают тик. Фактический урон в `applyDamage` обновляет `lastCoreDamageGameTime` (gameTime). Reset/activate/eliminate очищают timestamps. Диагностика в `/arena_core_combat_status`.
 - **Защита вышки:** `ArenaCoreManager.isCoreProtected(level, country)` — чистый запрос (без side effects); всегда считает защитников на **fight level** (`ArenaSpawns.resolveFightLevel`). Резерв без активной сущности **не** защищает. Сообщения о смене статуса — только из `updateCoreProtectionStates(server)` (один раз за server tick в `ArenaMatchManager.tickBattle`, после release резерва). `FighterTargeting` / HUD / команды статуса сообщения **не** отправляют.
 - Атака ядра (`ArenaCoreCombatManager`): range **3.5**, cooldown **20** тиков, windup **3** тика (`SWING_DURATION/2`), урон = `ATTACK_DAMAGE` бойца через `damageFromFighter`; подход — `getCoreAttackPosition`. Защищённую вышку AI **не атакует** (`findNearestAttackableCore` + проверки в windup/уроне); при отсутствии living/уязвимого ядра идёт **rally** (`rallyTowardEnemyFront`, `rallyOnly`) без урона. Заблокированный урон не попадает в `coreDamageDealt`. Операторский `/arena_core_damage` обходит защиту.
 - **Elimination / recovery (вариант C, `ArenaCoreRescueManager`):**
@@ -330,6 +344,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - Победитель по таймеру: (1) % HP вышки → (2) урон по вышкам → (3) ничья. Наличие защитников не даёт автопобеду.
 - Ничья: оба критерия равны / нет eligible; очки за ничью не выдаются.
 - Очки (`ArenaScoreManager`): hold **1**; duel (2 участника) **3**; multi (≥3) **5**.
+- **roundWins** (отдельно от очков): +1 при явной победе раунда (`awardBattleWin` / `awardHold`); ничья не начисляет; NBT compound `roundWins` в `ArenaScoreSavedData`.
 - SavedData: `ArenaScoreSavedData` (`arena_of_nations_scores`), `ArenaSetupSavedData` (`arena_of_nations_setup`).
 
 ---
@@ -380,6 +395,10 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - `/arena_country_layout_validate` — полная проверка 20 слотов (пересечения, spawn, path, cores)
 - `/arena_country_layout_debug on|off` — частицы base/core/spawn/path (оператор)
 
+### Клиент FPS
+- `/arena_client_perf` — LOD/culling/particle counters
+- `/arena_client_config_reload` — только `arena_of_nations-client.properties`
+
 ### AI / классы / баланс
 - `/arena_ai_status`
 - `/arena_melee_status`
@@ -427,28 +446,30 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - HD PNG: `textures/gui/flags_hd/<id>.png` **256×160** (из overlay SVG).
 - Флаг в мире ≈ **5.0 × 3.0** блока; позиция: core + inward **2** + above **11**.
 - Render: `entityCutoutNoCull` + FULL_BRIGHT; billboard `scale(-1,-1,1)`; рамка **за** флагом; текст Font отдельно.
-- Под флагом: «СТРАНА · CODE», «ЯДРО hp/max», полоска HP (~5.4×0.36), статус.
-- Дистанция: полный до **100**, fade до **120**; >85 блоков — только код страны.
+- **Над флагом:** отдельный world-billboard `Country.getDisplayName()` (`labelY = flagCenterY + 1.5 + 0.85`), `SEE_THROUGH` + FULL_BRIGHT; не в локальной матрице флага.
+- Видимость названия = видимость флага: `CURRENT_ROUND_PARTICIPANTS` && !eliminated && slot>=0; RESCUE оставляет; ELIMINATION/reset убирает. Не все 20 баз.
+- Под флагом: «ЯДРО hp/max», полоска HP (~5.4×0.36), статус (ЩИТ / УЯЗВИМА / …).
+- Дистанция: полный до **100**, fade до **120**.
 - Depth test включён; тонкая тёмная рамка; default **on** (`/arena_base_markers`).
 - Legacy `ArenaCoreDisplayManager` TextDisplay и `ArenaBaseCodeDisplay` ArmorStand **отключены** (clear/hide сохранены).
 - Core damage **не** перестраивает блоки базы; фонари на stone brick + chain; `UPDATE_SUPPRESS_DROPS`.
 
 ### Внешний browser overlay
-- **Overlay-only HTTP:** `127.0.0.1:8766` (`ArenaOverlayHttpServer`) — whitelist: `/overlay/**`, `/arena/health`, `/arena/overlay-state`, `/api/arena/state`. Gift/chat **нет**.
+- **Режим:** `TIKTOK_WINDOW_CHROMA`. Захват окна: `OPEN_OVERLAY_WINDOW.cmd` → `?background=chroma`, chroma **`#FF00FF`**. Native canvas 1080×1920 без CSS scale. Карточки показывают HP базы (`coreHp`/`coreMaxHp`). In-game HUD выключен.
+- **Модули:** независимые `battle-overlay-module`, `top-five-countries-module`, `record-overlay-module` на `#overlay-workspace`. Edit: `?edit=1` — drag, fixed toolbar, статистика (сброс wins/points/record с confirm, только IDLE/BREAK). Layout v3 server JSON (`xRatio`/`yRatio`/`scale`/`visible`).
+- **ТОП-5:** snapshot `topCountries` по `roundWins`; модуль 400px; число побед 30px + слово 19px; 0 побед → «ПОКА НЕТ ПОБЕД».
+- **РЕКОРД:** persistent max fighters за один раунд (`ArenaScoreSavedData`); счётчик раунда в MatchManager; snapshot `fighterRoundRecord`.
+- **Участники snapshot:** `CURRENT_ROUND_PARTICIPANTS` (`roundParticipants`); карточки = `!eliminated` (RESCUE остаётся); WAITING holder сразу; `pushNow` после gift/reset/win; `pushNowAfterElimination` при финальном knockout; порядок `joinOrder`.
+- **Сетка:** CSS Grid `countries-1`…`countries-13-20` (1 кол. для 1–2 стран, иначе 2; LARGE/MEDIUM/COMPACT/ULTRA_COMPACT); без scrollbar / `transform: scale`.
+- **Почему не HTTP:** LIVE Studio отклоняет `http://127.0.0.1:...` («Введите корректную ссылку»). Нужен HTTPS + доверенный локальный сертификат Windows.
+- **Одноразовая настройка:** `SETUP_LOCAL_OVERLAY_HTTPS.cmd` (UAC) → Root CA в `LocalMachine\Root`, **server cert в `Cert:\CurrentUser\My`** с SAN `localhost` + `arena-overlay.test` + `127.0.0.1`. Runtime через SunMSCAPI **`Windows-MY`**. Hosts для основного URL **не требуется** (`customHostsRequired=false`). Legacy PKCS12/DPAPI опциональны. Скрипт: UTF-8 BOM, `-ValidateOnly` / `-VerifyInstalled`, Gradle `validatePowerShellScripts` + `verifyWindowsMySsl`.
+- **Overlay HTTPS:** `127.0.0.1:8766` (`HttpsServer` / `ArenaOverlayHttpServer`) — whitelist: `/overlay/**`, `/arena/health`, `/arena/overlay-state`, `/api/arena/state`. Gift/chat/S2E **нет** (404).
 - **StreamToEarn HTTP:** отдельно `127.0.0.1:8765` — только health + gift/chat при `s2e_http_enabled` + token.
-- Desktop preview: `http://127.0.0.1:8766/overlay`
-- **TikTok vertical (бесплатно, без домена):** `http://127.0.0.1:8766/overlay/tiktok` (логический canvas **1080×1920**, прозрачный фон) — TikTok LIVE Studio / OBS Browser Source **на том же ПК**.
-- TikTok UI (компактный стрим-HUD): одна верхняя полоса — фаза + таймер «ДО КОНЦА» + число стран; по бокам плотные однострочные карточки (флаг, код, **БОЙЦЫ**, **РЕЗЕРВ**, короткий статус ЩИТ/ОТКР/с/OUT); центр и низ свободны под картинку эфира; HP-полоски убраны с карточек. Без домена/Cloudflare.
-- Cloudflare Named Tunnel / покупка домена **не используются**. Ключи `overlay_public_*` по умолчанию выключены.
-- Копирование URL: `tools/overlay-setup/CopyLocalOverlayUrl.cmd`; daily: `START_ARENA.cmd`.
-- Query: `?scale=0.9`, `?preview=1` (fit-scale + guides + connection status)
-- JSON API: `GET /arena/overlay-state` и alias `GET /api/arena/state` (`Cache-Control: no-store`, `X-Content-Type-Options: nosniff`)
-- Thread-safety: snapshot на server tick (`ArenaOverlayStateService`) → immutable JSON; HTTP читает только snapshot.
-- **`ArenaOverlayStateService.pushNow(server)`** — немедленная публикация; в BATTLE не чаще **4 раз/с**.
-- Static assets: один набор `overlay/` + `overlay/tiktok/` (не дублируется по портам).
-- TikTok DOM: стабильные карточки (`cardById`); PNG flags; reconnect: один `pollOnce`, AbortController, backoff ≤10s, `lastSuccessfulData`.
-- Команды: `/arena_overlay_status` (без token), `/arena_overlay_restart`, `/arena_overlay_dump`.
-- Unit-тесты: PublicUrl / HttpServer whitelist / ReconnectScript — **10 PASS**.
+- Lifecycle: start на `SERVER_STARTED`, stop на `SERVER_STOPPING`; повторный start → `alreadyRunning`; без keystore → понятная ошибка + SETUP cmd.
+- Config: `overlay_http_enabled`, `overlay_http_bind=127.0.0.1`, `overlay_http_port=8766`, `overlay_https_enabled=true`, `overlay_https_hostname=localhost`, `overlay_poll_interval_ms=750`. Публичный tunnel path принудительно выключен.
+- UX: `START_ARENA.cmd` (проверяет keystore/hosts), `OPEN_OVERLAY.cmd`, `OVERLAY_README_RU.txt`, `tools/overlay-https/`.
+- Команды: `/arena_overlay_status` (`LOCAL_HTTPS_BROWSER`, cert/hosts флаги, `overlayParticipantSource`/`overlayDisplayedCountries`/`overlayCardSizeMode`/…, без секретов).
+- Unit-тесты: HTTP whitelist + HTTPS keytool ephemeral + Windows-MY selection/legacy isolation + jar safety + reconnect/PublicUrl + `ArenaOverlayLayoutAndSnapshotTest` (1/6/20 стран, reset, order).
 - Сценарий: `/arena_test_scenario overlay_tiktok_test`.
 
 ## 16. Проверенные функции
@@ -470,7 +491,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 - **TikTok overlay PNG flags — подтверждено в TikTok LIVE Studio**: мерцание SVG/CEF полностью исчезло; текст/HP/статусы/PNG-флаги стабильны; прозрачный browser source 1080×1920 работает (исторически через tunnel; текущий бесплатный путь — локальный `127.0.0.1:8766`).
 - **Полный массовый бой 1000×1000 — подтверждён вручную в Minecraft** (`/arena_round_reset` + `/arena_gift ru 1000` + `/arena_gift ua 1000`): волны резерва, выход с баз, rally → melee, приемлемая производительность, атака ядер, rescue/elimination, завершение с победителем.
 
-Сборка `gradlew.bat clean build` доведена до **BUILD SUCCESSFUL** (30.07, medieval glaive visual rewrite).
+Сборка `gradlew.bat clean build` доведена до **BUILD SUCCESSFUL** (30.07, false FAILED / runId result JSON fix).
 
 ---
 
@@ -486,13 +507,53 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ## 18. Текущий фокус
 
-Разработка и улучшение самой игры Arena of Nations (визуал стран/бойцов). StreamToEarn audit stage 1 выполнен по коду; реальный TikTok-эфир ещё не подключался.
+Локальный HTTPS overlay для TikTok LIVE Studio (захват окна + chroma `#FF00FF`). In-game Arena HUD отключён. Адаптивная сетка 1–20 стран + мгновенный WAITING holder. Перемещаемые модули боя и ТОП-5 (`?edit=1`). Названия стран над флагами баз в мире.
 
 ---
 
 ## 19. Последние изменения
 
 ~15–20 последних этапов по коду. Без простыней Java.
+
+82. **Remove overlay team-codes hint (31.07)** — убран блок «КОДЫ КОМАНД — НАПИШИ В ЧАТ» из TikTok overlay (HTML/CSS/JS) и поля `teamJoinCodes`/`teamJoinHint` из snapshot. Вступление в команду чатом без изменений. Тест обновлён. `clean build` SUCCESS; Minecraft не запускался.
+
+81. **Core HP regen in BATTLE (31.07)** — +5 HP / 5с после 15с без урона; только активные не-eliminated ядра с HP&gt;0; кап max HP; timestamps в `ArenaCoreState`; тик только из `tickBattle`; диагностика в `/arena_core_combat_status`. Тесты `ArenaCoreRegenTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+80. **WAITING field limit 25 (31.07)** — во время WAITING на поле максимум 25 живых спортсменов ожидающей команды; волны с тем же `reserveReleaseBatch`/interval; формула с `waitingRemainingSlots`; сверх лимита — в резерве; подарки продолжают наполнять резерв. Старт BATTLE: 25 остаются, лимит снимается. Счётчик живых не переносится (reset/clear). Тесты `ArenaWaitingFieldLimitTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+79. **Team join without ! (31.07)** — основной чат-формат `ru` / `команда ru` (trim, lowercase, точное совпадение); `!ru` только legacy. Уведомление `@user вступил в команду …`; диагностика lastTeamJoin*; overlay подсказка кодов без `!`. Gift pipeline без изменений. Тесты `ArenaTeamJoinParserTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+78. **Stable fighter flags rollback (31.07)** — откат визуального gate FPS-оптимизации: флаги снова каждый frame без LOD/budget; убран custom `shouldRender` distance cull; billboard `new Quaternionf(camera)` каждый кадр. Particle budget/config/команды оставлены. Причина мерцания: NEAR-only overhead + max 20 nameplates. `clean build` SUCCESS; Minecraft не запускался.
+
+77. **CLIENT FPS OPTIMIZATION (31.07)** — клиентский LOD/culling бойцов без смены геймплея. `ArenaClientPerfConfig` → `config/arena_of_nations-client.properties` (render 128, shadows default off, adaptive). `ArenaFighterRenderer.shouldRender` + distance cull (squared); тени/overhead по NEAR/MID/FAR; immutable country→skin cache; entityId→country cache; `ArenaFighterVisualEffects` без per-tick `getEntitiesOfClass`, particle budget 20/48. Команды `/arena_client_perf`, `/arena_client_config_reload`. Тесты `ArenaClientPerfOptimizationTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+76. **Live reserveReleaseBatch 1–100 (31.07)** — edit overlay секция РЕЗЕРВ (`?edit=1`): −/+ / поле / пресеты / ПРИМЕНИТЬ СЕЙЧАС. Runtime `ArenaReserveRuntimeSettings` (AtomicInteger) + persist `reserve_wave_size`. API `GET/POST /overlay/api/runtime/reserve-settings`; `/arena_reserve_batch`; диагностика status-команд; snapshot `runtimeSettings.reserveReleaseBatch`. Scheduler читает batch на каждой волне; apply не стартует волну и не сбрасывает таймер; `activeFightersLimit`/`interval` не менялись. Тесты `ArenaReserveReleaseBatchTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+75. **Fighter round record + stats reset (31.07)** — модуль `record-overlay-module` (160×100, золотой круглый флаг); persistent `fighterRoundRecord` в `ArenaScoreSavedData` (`>` only); `fightersSentThisRound` в MatchManager (acceptFighter / gift pipeline); сброс counters на beginBreak/reset. Edit: секция СТАТИСТИКА + confirm dialog; POST `/overlay/api/stats/reset-*` (IDLE/BREAK only, 409 иначе). Layout v3 + `record` module. Команды `/arena_fighter_record_status|reset`. Тесты `ArenaFighterRecordAndStatsResetTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+74. **Overlay server layout + top5 sizes (31.07)** — layout в `config/arena_of_nations_overlay_layout.json` (xRatio/yRatio); API `GET/POST /overlay/api/layout`, `POST .../reset`; миграция из localStorage; workspace `#overlay-workspace` без clip; drag по всей странице + auto-scroll в edit; ТОП-5 width 400px, wins 30px/19px; toolbar `position:fixed`. Диагностика SERVER_CONFIG. Тесты `ArenaOverlayLayoutConfigTest` + обновлённые overlay-тесты. `clean build` SUCCESS; Minecraft не запускался.
+
+73. **Overlay drag + ТОП-5 roundWins (31.07)** — два независимых модуля (`battle-overlay-module`, `top-five-countries-module`) с `left/top`; `?edit=1` — drag за ручку (Pointer Events), СОХРАНИТЬ/СБРОСИТЬ, скрытие БОЙ/ТОП-5; позиции и visibility в `localStorage`. Snapshot: `topCountries[]` (rank, countryId, displayName, flagUrl, roundWins, scorePoints). `ArenaScoreSavedData.roundWins` отдельно от очков; +1 при `awardBattleWin`/`awardHold`, ничья без начисления; `pushNow` после записи. Склонение `ArenaRoundWinsGrammar`. Диагностика `/arena_overlay_status`. Тест `ArenaOverlayTopFiveAndDragTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+72. **Release v1.0-stream-tested (31.07)** — зафиксирован стабильный пакет `releases/v1.0-stream-tested` после реального TikTok LIVE-стрима. `clean build` SUCCESS; jar `arena_of_nations-1.0.0.jar`; игровой код при упаковке не менялся; секреты/сертификаты не копировались.
+
+71. **Overlay hide eliminated cards (31.07)** — browser `countries` = `currentRound && !eliminated` (RESCUE остаётся). `activeCountryCount` = число карточек; grid densеity по новому N. `pushNowAfterElimination` сразу после финального knockout. JS-guard + banner при исчезновении id. Диагностика `overlayRoundParticipants`/`overlayEliminatedCountries`/`overlayDisplayedCountries`/`overlayLastRemovedCountry`. Тест `ArenaOverlayEliminatedCardFilterTest`. `clean build` SUCCESS; Minecraft не запускался.
+
+70. **Fix invisible base country name (31.07)** — название больше не в локальной матрице флага (`-FLAG_HALF_H - gap`); отдельный world-billboard: `labelY = flagCenterY + FLAG_HALF_H + 0.85`, `scale(-0.045)`, `Font.DisplayMode.SEE_THROUGH`, `FULL_BRIGHT`. Диагностика draw на клиенте `/arena_base_markers status`. `ArenaBaseMarkerLayout` + тесты render-math. `clean build` SUCCESS; Minecraft не запускался.
+
+69. **Base country label lifecycle (30.07)** — названия над флагами только у `CURRENT_ROUND_PARTICIPANTS` (!eliminated, slot>=0); RESCUE сохраняет, ELIMINATION/reset скрывает вместе с флагом. `ArenaRoundHudSync.pushNow` после gift/reset для мгновенного WAITING. Диагностика `baseCountryLabels*` в `/arena_base_markers` и `/arena_visual_status`. Тест `ArenaBaseCountryLabelLifecycleTest` (10 PASS). `clean build` SUCCESS; Minecraft не запускался.
+
+68. **Base country name above flag (30.07)** — `ArenaBaseMarkerRenderer`: человекочитаемое `Country.getDisplayName()` рисуется **над** флагом базы (client billboard, без TextDisplay). Под флагом остаются ЯДРО/полоска/статус. Legacy server TextDisplay по-прежнему disabled + cleanup. Тест `ArenaBaseMarkerNameLabelTest` (3 PASS). `clean build` SUCCESS; Minecraft не запускался.
+
+67. **Adaptive overlay grid + WAITING first country (30.07)** — JS больше не кладёт первые 10 стран в один левый столбец (`slice(0,10)`); CSS Grid `countries-1`…`countries-13-20` (1 кол. для 1–2, иначе 2; LARGE/MEDIUM/COMPACT/ULTRA_COMPACT). Snapshot: только `CURRENT_ROUND_PARTICIPANTS` + `joinOrder`; WAITING holder сразу в `countries`; overlay-only ЩИТ в WAITING; `pushNow` после gift/reset. Диагностика в `/arena_overlay_status` и `?preview=1`. Тесты `ArenaOverlayLayoutAndSnapshotTest` (12 PASS). `clean build` SUCCESS; Minecraft не запускался.
+
+66. **Magenta chroma + larger HP cards (30.07)** — chroma `#00FF00` → **`#FF00FF`** (зелёный key вырезал HP/панели). Убраны CSS `transform: scale` / fit-scale; native 1080×1920; UI ~+40%; карточки показывают БАЗА `coreHp/coreMaxHp` + полоску (зелёный/жёлтый/красный); щит не скрывает HP. Snapshot: `coreProtected`/`coreVulnerable`/`rescueRemaining`. `OPEN_OVERLAY_WINDOW` + `--force-device-scale-factor=1`. README без OBS. `clean build` SUCCESS; Minecraft не запускался.
+
+65. **Window chroma + remove in-game HUD (30.07)** — режимы `?background=transparent|chroma`; chroma тогда был `#00FF00`; `OPEN_OVERLAY_WINDOW.cmd`; `ArenaRoundHudRenderer` без HudRenderCallback. `clean build` SUCCESS.
+
+64. **Primary URL localhost (proxy-safe) (30.07)** — основной URL `https://localhost:8766/overlay/tiktok`; Windows-MY SAN localhost+legacy+127.0.0.1.
+
+63. **Windows-MY HTTPS (no DPAPI) (30.07)** — runtime через SunMSCAPI `Windows-MY`, без обязательного PKCS12/DPAPI.
 
 1. **Humanoid foundation** — wide PlayerModel, Steve fallback, visual weapons, tier client VFX, flags + overhead HP.
 2. **Melee AI** — свои goals без wolf leap; `ArenaFighterMeleeAttackGoal`; windup **3** тика; sticky target; reach 2.35/2.95; **без** `Goal.Flag.MOVE`.
@@ -551,6 +612,11 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 55. **Remove paid overlay path (30.07)** — удалён мастер Named Cloudflare Tunnel (`ArenaOverlaySetup.*`); убраны проверки службы cloudflared из `START_ARENA.cmd`; основной путь — бесплатный локальный URL `http://127.0.0.1:8766/overlay/tiktok` + `CopyLocalOverlayUrl.cmd` / README без домена. Java/ресурсы не менялись (сборка не требовалась).
 56. **TikTok compact stream HUD (30.07)** — переработан `overlay/tiktok`: прозрачный 9:16 HUD; шапка «фаза · ДО КОНЦА mm:ss · N стран»; карточки одной строкой (флаг/код/бойцы/резерв/статус); HP-полоски убраны; до 20 стран (10+10) без перекрытия центра. Проверено `clean build`.
 57. **OBS blank overlay fix (30.07)** — авто-fit 1080×1920 в любой размер Browser Source; HTML/CSS/JS `Cache-Control: no-store` (флаги PNG кэшируются); стартовая надпись «Загрузка…»; инструкция OBS в `tools/overlay-setup`. Проверено сборкой.
+58. **Final local browser overlay (30.07)** — стабильный LOCAL_BROWSER путь: порт **8766** whitelist-only; S2E на **8765**; immutable snapshot + empty IDLE JSON; health/`/arena_overlay_status` без секретов; poll **750ms**, reconnect 1→2→4→8→max10s, RECONNECTING без очистки DOM; `START_ARENA.cmd` / `OPEN_OVERLAY.cmd` / `OVERLAY_README_RU.txt`; Cloudflare setup не используется. Проверено `clean build` + unit-тесты; Minecraft не запускался.
+59. **Local HTTPS overlay for LIVE Studio (30.07)** — HTTP localhost отклонялся источником «Ссылка»; переход на `https://arena-overlay.test:8766/overlay/tiktok`: hosts + локальный Root CA/trust + PKCS12 в `%LOCALAPPDATA%`, `HttpsServer`, `SETUP_LOCAL_OVERLAY_HTTPS.cmd`, обновлены START/OPEN/README/status/config. Приватный ключ не в Git/jar. Проверено `clean build` + unit-тесты; Minecraft не запускался.
+60. **Fix HTTPS setup ParserError (30.07)** — `Setup-LocalOverlayHttps.ps1` был UTF-8 **без BOM** → Windows PowerShell 5.1 ломал кириллицу и `-TextExtension` с `&` (8 parser errors). Переписан UTF-8 **с BOM**, `-ValidateOnly`, UAC self-elevate, hosts без regex-багов, Root/server через `New-SelfSignedCertificate`, Gradle task `validatePowerShellScripts`. Parser=0, ValidateOnly=SUCCESS; полный UAC setup требует ручного запуска. Minecraft не запускался.
+61. **HTTPS setup observability (30.07)** — elevated-окно больше не закрывается мгновенно: `Read-Host` (кроме `-NoPause`/`-ValidateOnly`); parent ждёт UAC через `Start-Process -Wait`; лог `%LOCALAPPDATA%\ArenaOfNations\overlay-https\setup.log` + `setup-result.json` без секретов; финальные проверки hosts/DNS/Root/SAN/PKCS12+DPAPI; CMD показывает SUCCESS/FAILED и путь к логу. Parser=0, ValidateOnly=SUCCESS; MANUAL UAC TEST REQUIRED. Minecraft не запускался.
+62. **Fix false FAILED after SUCCESS (30.07)** — код `-1073741510` (0xC000013A) после Enter в admin-окне больше не даёт ложный FAILED: итог по `setup-result.json` + `runId`, атомарная запись JSON, единственный `exit` в конце PS1; `Resolve-OverlayParentOutcome`; `-VerifyInstalled` + `VERIFY_LOCAL_OVERLAY_HTTPS.cmd`; `START_ARENA` через VerifyInstalled. Автотесты result-логики PASS; сертификаты не пересоздавались. Minecraft не запускался.
 
 Заменено ранее:
 

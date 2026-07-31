@@ -41,9 +41,24 @@ tools/overlay-setup/*.json
 *.tunnel-token
 **/overlay-public-config.local.*
 
+# local HTTPS overlay runtime (private keys / PFX / DPAPI secrets — never commit)
+**/overlay-https/*.p12
+**/overlay-https/*.pfx
+**/overlay-https/*.key
+**/overlay-https/*.pem
+**/overlay-https/*.dpapi
+**/overlay-https/*password*
+**/overlay-https/*secret*
+**/overlay-https/*.pass*
+%LOCALAPPDATA%/ArenaOfNations/
+ArenaOfNations/overlay-https/
+
 # java
 
 hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# local minecraft/server logs (never commit)
+logs/

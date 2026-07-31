@@ -180,6 +180,16 @@ public final class ArenaRoundHudSync {
 		ArenaOverlayStateService.pushNow(server);
 	}
 
+	/** Immediate HUD + overlay refresh after final country elimination. */
+	public static void pushNowAfterElimination(MinecraftServer server, Country eliminated) {
+		ArenaHudSnapshot snapshot = buildSnapshot(server);
+		sendToAll(server, snapshot);
+		INSTANCE.lastSent = snapshot;
+		INSTANCE.sentNonIdle = snapshot.shouldDisplay();
+		INSTANCE.tickCounter = 0;
+		ArenaOverlayStateService.pushNowAfterElimination(server, eliminated);
+	}
+
 	private static int showStatus(CommandSourceStack source) {
 		ArenaHudSnapshot snapshot = buildSnapshot(source.getServer());
 		StringBuilder text = new StringBuilder("Client round HUD:\n")

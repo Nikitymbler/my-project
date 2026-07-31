@@ -64,6 +64,16 @@ public final class ArenaViewerEventManager {
 	private volatile long lastEventGameTime = -1L;
 	private volatile String lastEventKind = "";
 
+	private volatile String lastTeamJoinRawComment = "";
+	private volatile String lastTeamJoinNormalizedComment = "";
+	private volatile String lastTeamJoinCode = "";
+	private volatile String lastTeamJoinCountry = "";
+	private volatile boolean lastTeamJoinSuccess;
+	private volatile boolean lastTeamJoinLegacyFormat;
+	private volatile boolean lastTeamJoinDuplicate;
+
+	private final Map<String, Long> processedChatIds = new LinkedHashMap<>();
+
 	private int ticksSinceDedupCleanup = 0;
 
 	private ArenaViewerEventManager() {
@@ -242,6 +252,9 @@ public final class ArenaViewerEventManager {
 		synchronized (processedGiftIds) {
 			processedGiftIds.clear();
 		}
+		synchronized (processedChatIds) {
+			processedChatIds.clear();
+		}
 		acceptedChatEvents.set(0);
 		acceptedGifts.set(0);
 		rejectedGifts.set(0);
@@ -255,6 +268,13 @@ public final class ArenaViewerEventManager {
 		lastError = "";
 		lastEventGameTime = -1L;
 		lastEventKind = "";
+		lastTeamJoinRawComment = "";
+		lastTeamJoinNormalizedComment = "";
+		lastTeamJoinCode = "";
+		lastTeamJoinCountry = "";
+		lastTeamJoinSuccess = false;
+		lastTeamJoinLegacyFormat = false;
+		lastTeamJoinDuplicate = false;
 		ticksSinceDedupCleanup = 0;
 	}
 
@@ -273,15 +293,28 @@ public final class ArenaViewerEventManager {
 		builder.append("duplicates=").append(duplicateGifts.get()).append('\n');
 		builder.append("gifts без eventId=").append(giftsWithoutEventId.get()).append('\n');
 		builder.append("переполнения очереди=").append(queueOverflows.get()).append('\n');
+		builder.append("lastTeamJoinRawComment=").append(blank(lastTeamJoinRawComment)).append('\n');
+		builder.append("lastTeamJoinNormalizedComment=").append(blank(lastTeamJoinNormalizedComment)).append('\n');
+		builder.append("lastTeamJoinCode=").append(blank(lastTeamJoinCode)).append('\n');
+		builder.append("lastTeamJoinCountry=").append(blank(lastTeamJoinCountry)).append('\n');
+		builder.append("lastTeamJoinSuccess=").append(lastTeamJoinSuccess).append('\n');
+		builder.append("lastTeamJoinLegacyFormat=").append(lastTeamJoinLegacyFormat).append('\n');
+		builder.append("lastTeamJoinDuplicate=").append(lastTeamJoinDuplicate).append('\n');
 		builder.append("выбор стран:");
 		for (Country country : Country.values()) {
 			builder.append('\n')
 					.append("- ")
 					.append(country.getDisplayName())
-					.append(": ")
+					.append(" (")
+					.append(country.getId())
+					.append("): ")
 					.append(distribution.getOrDefault(country, 0));
 		}
 		return builder.toString();
+	}
+
+	private static String blank(String value) {
+		return value == null || value.isBlank() ? "-" : value;
 	}
 
 	private boolean offer(Object event) {
@@ -335,20 +368,45 @@ public final class ArenaViewerEventManager {
 		lastViewer = event.viewerId();
 		lastEventKind = "chat";
 		lastEventGameTime = gameTime;
+		lastTeamJoinRawComment = event.message() == null ? "" : event.message();
+		lastTeamJoinDuplicate = false;
+		lastTeamJoinSuccess = false;
+		lastTeamJoinLegacyFormat = false;
+		lastTeamJoinCode = "";
+		lastTeamJoinCountry = "";
 
 		if (!ArenaConfig.get().isViewerEventsEnabled()) {
 			lastError = "viewer_events_disabled";
+			lastTeamJoinNormalizedComment = ArenaTeamJoinParser.normalize(event.message());
 			return;
 		}
 
-		Country country = parseCountryCommand(event.message());
-		if (country == null) {
+		ArenaTeamJoinParser.Result parsed = ArenaTeamJoinParser.parse(event.message());
+		lastTeamJoinNormalizedComment = parsed.normalizedComment();
+		lastTeamJoinLegacyFormat = parsed.legacyFormat();
+
+		if (!parsed.matched() || parsed.country() == null) {
 			lastError = "unknown_or_missing_country_command";
 			return;
 		}
 
+		Country country = parsed.country();
+		lastTeamJoinCode = country.getId();
+		lastTeamJoinCountry = country.getDisplayName();
+
+		String eventId = event.eventId();
+		if (eventId != null && !eventId.isBlank()) {
+			if (!tryClaimChatEventId(eventId, gameTime, ArenaConfig.get().getViewerEventDedupSeconds())) {
+				lastTeamJoinDuplicate = true;
+				lastError = "duplicate_chat_eventId";
+				return;
+			}
+		}
+
 		String viewerId = event.viewerId();
+		Country previous;
 		synchronized (countryByViewerMutex) {
+			previous = countryByViewer.get(viewerId);
 			countryByViewer.put(viewerId, country);
 		}
 		acceptedChatEvents.incrementAndGet();
@@ -356,6 +414,44 @@ public final class ArenaViewerEventManager {
 		lastGiftSummary = "";
 		lastFighterCount = 0;
 		lastError = "";
+		lastTeamJoinSuccess = true;
+
+		// Same team again: keep selection, do not re-announce (no fighters from chat).
+		if (previous == country) {
+			return;
+		}
+
+		String display = event.viewerName() == null || event.viewerName().isBlank()
+				? viewerId
+				: event.viewerName();
+		broadcastTeamJoin(server, display, country);
+	}
+
+	private static void broadcastTeamJoin(MinecraftServer server, String viewerName, Country country) {
+		String name = viewerName.startsWith("@") ? viewerName : ("@" + viewerName);
+		server.getPlayerList().broadcastSystemMessage(
+				Component.literal(name + " вступил в команду " + country.getDisplayName().toUpperCase(Locale.ROOT)),
+				false);
+	}
+
+	private boolean tryClaimChatEventId(String eventId, long gameTime, int dedupSeconds) {
+		long ttlTicks = Math.max(1L, dedupSeconds) * 20L;
+		synchronized (processedChatIds) {
+			Long previous = processedChatIds.get(eventId);
+			if (previous != null && gameTime - previous < ttlTicks) {
+				return false;
+			}
+			processedChatIds.put(eventId, gameTime);
+			while (processedChatIds.size() > MAX_DEDUP_IDS) {
+				Iterator<String> it = processedChatIds.keySet().iterator();
+				if (!it.hasNext()) {
+					break;
+				}
+				it.next();
+				it.remove();
+			}
+			return true;
+		}
 	}
 
 	private void processGift(MinecraftServer server, ViewerGiftEvent event) {
@@ -470,17 +566,30 @@ public final class ArenaViewerEventManager {
 				keys.remove();
 			}
 		}
+		synchronized (processedChatIds) {
+			Iterator<Map.Entry<String, Long>> it = processedChatIds.entrySet().iterator();
+			while (it.hasNext()) {
+				Map.Entry<String, Long> entry = it.next();
+				if (gameTime - entry.getValue() >= ttlTicks) {
+					it.remove();
+				}
+			}
+			while (processedChatIds.size() > MAX_DEDUP_IDS) {
+				Iterator<String> keys = processedChatIds.keySet().iterator();
+				if (!keys.hasNext()) {
+					break;
+				}
+				keys.next();
+				keys.remove();
+			}
+		}
 	}
 
+	/** @deprecated use {@link ArenaTeamJoinParser#parse(String)} */
+	@Deprecated
 	static Country parseCountryCommand(String message) {
-		if (message == null) {
-			return null;
-		}
-		String trimmed = message.trim().toLowerCase(Locale.ROOT);
-		if (trimmed.startsWith("!") && trimmed.length() > 1) {
-			return Country.byId(trimmed.substring(1));
-		}
-		return null;
+		ArenaTeamJoinParser.Result result = ArenaTeamJoinParser.parse(message);
+		return result.matched() ? result.country() : null;
 	}
 
 	private static String normalizeEventId(String eventId) {

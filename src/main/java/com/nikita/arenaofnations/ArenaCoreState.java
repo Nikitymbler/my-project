@@ -9,6 +9,10 @@ public final class ArenaCoreState {
 	private float currentHealth;
 	private boolean active;
 	private boolean destroyed;
+	/** Server game time of last actual positive HP loss; {@code -1} = none this round. */
+	private long lastCoreDamageGameTime = -1L;
+	/** Server game time of last successful regen tick; {@code -1} = none this round. */
+	private long lastCoreRegenGameTime = -1L;
 
 	public ArenaCoreState(Country country, float maxHealth) {
 		this.country = country;
@@ -38,6 +42,14 @@ public final class ArenaCoreState {
 		return destroyed;
 	}
 
+	public long getLastCoreDamageGameTime() {
+		return lastCoreDamageGameTime;
+	}
+
+	public long getLastCoreRegenGameTime() {
+		return lastCoreRegenGameTime;
+	}
+
 	public float getHealthPercent() {
 		if (maxHealth <= 0.0F) {
 			return 0.0F;
@@ -50,6 +62,7 @@ public final class ArenaCoreState {
 		this.currentHealth = this.maxHealth;
 		this.active = true;
 		this.destroyed = false;
+		clearRegenTimestamps();
 	}
 
 	public void deactivate() {
@@ -61,6 +74,45 @@ public final class ArenaCoreState {
 		this.currentHealth = this.maxHealth;
 		this.active = false;
 		this.destroyed = false;
+		clearRegenTimestamps();
+	}
+
+	public void clearRegenTimestamps() {
+		lastCoreDamageGameTime = -1L;
+		lastCoreRegenGameTime = -1L;
+	}
+
+	/**
+	 * Records last actual positive damage using Minecraft server game time.
+	 */
+	public void noteActualDamage(long gameTime) {
+		if (gameTime < 0L) {
+			return;
+		}
+		lastCoreDamageGameTime = gameTime;
+	}
+
+	public void noteRegen(long gameTime) {
+		if (gameTime < 0L) {
+			return;
+		}
+		lastCoreRegenGameTime = gameTime;
+	}
+
+	/** Test helper: set damage timestamp without applying HP loss. */
+	public void setLastCoreDamageGameTimeForTest(long gameTime) {
+		lastCoreDamageGameTime = gameTime;
+	}
+
+	/** Test helper: set regen timestamp without applying heal. */
+	public void setLastCoreRegenGameTimeForTest(long gameTime) {
+		lastCoreRegenGameTime = gameTime;
+	}
+
+	/** Test helper: set HP without going through damage/heal side effects. */
+	public void setCurrentHealthForTest(float health) {
+		currentHealth = Math.max(0.0F, Math.min(maxHealth, health));
+		destroyed = currentHealth <= 0.0F;
 	}
 
 	public float damage(float amount) {
@@ -84,6 +136,19 @@ public final class ArenaCoreState {
 	}
 
 	/**
+	 * Battle regen only: never revives a destroyed / zero-HP core; caps at max HP.
+	 *
+	 * @return HP after attempt (unchanged when blocked)
+	 */
+	public float regenerate(float amount) {
+		if (amount <= 0.0F || destroyed || currentHealth <= 0.0F) {
+			return currentHealth;
+		}
+		currentHealth = Math.min(maxHealth, currentHealth + amount);
+		return currentHealth;
+	}
+
+	/**
 	 * Restore a destroyed core after a successful rescue gift.
 	 */
 	public void restoreToPercent(int percent) {
@@ -97,6 +162,7 @@ public final class ArenaCoreState {
 		active = false;
 		destroyed = true;
 		currentHealth = 0.0F;
+		clearRegenTimestamps();
 	}
 
 	public CoreVisual resolveVisual() {

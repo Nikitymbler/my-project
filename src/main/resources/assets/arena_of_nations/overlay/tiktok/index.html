@@ -7,9 +7,61 @@
   <link rel="stylesheet" href="/overlay/tiktok/tiktok.css">
 </head>
 <body>
-  <div id="fit-root">
-    <div id="stage">
-      <div id="stage-inner">
+  <div id="edit-toolbar" class="edit-only hidden" aria-label="Редактор overlay">
+    <div class="edit-section-title">МОДУЛИ</div>
+    <button type="button" id="btn-toggle-battle" class="edit-btn">БОЙ: ВКЛ</button>
+    <button type="button" id="btn-toggle-top5" class="edit-btn">ТОП-5: ВКЛ</button>
+    <button type="button" id="btn-toggle-record" class="edit-btn">РЕКОРД: ВКЛ</button>
+    <button type="button" id="btn-save-layout" class="edit-btn edit-btn-primary">СОХРАНИТЬ</button>
+    <button type="button" id="btn-reset-layout" class="edit-btn">СБРОСИТЬ ПОЗИЦИИ</button>
+    <div class="edit-section-title">СТАТИСТИКА</div>
+    <button type="button" id="btn-reset-wins" class="edit-btn edit-btn-danger">СБРОСИТЬ ТОП-5 ПОБЕД</button>
+    <button type="button" id="btn-reset-points" class="edit-btn edit-btn-danger">СБРОСИТЬ ОЧКИ СТРАН</button>
+    <button type="button" id="btn-reset-record" class="edit-btn edit-btn-danger">СБРОСИТЬ РЕКОРД БОЙЦОВ</button>
+    <button type="button" id="btn-reset-all-stats" class="edit-btn edit-btn-danger">СБРОСИТЬ ВСЮ СТАТИСТИКУ</button>
+    <div id="stats-reset-hint" class="stats-reset-hint hidden">СБРОС ДОСТУПЕН В ПЕРЕРЫВЕ</div>
+    <div class="edit-section-title">РЕЗЕРВ</div>
+    <div class="reserve-batch-label">ВЫПУСК ЗА ОДНУ ВОЛНУ</div>
+    <div class="reserve-batch-controls">
+      <button type="button" id="btn-reserve-batch-dec" class="edit-btn reserve-step-btn" aria-label="Уменьшить">−</button>
+      <input type="number" id="reserve-batch-input" class="reserve-batch-input" min="1" max="100" step="1" value="10" inputmode="numeric">
+      <button type="button" id="btn-reserve-batch-inc" class="edit-btn reserve-step-btn" aria-label="Увеличить">+</button>
+    </div>
+    <div class="reserve-batch-presets" aria-label="Быстрые значения">
+      <button type="button" class="edit-btn reserve-preset-btn" data-batch="1">1</button>
+      <button type="button" class="edit-btn reserve-preset-btn" data-batch="5">5</button>
+      <button type="button" class="edit-btn reserve-preset-btn" data-batch="10">10</button>
+      <button type="button" class="edit-btn reserve-preset-btn" data-batch="25">25</button>
+      <button type="button" class="edit-btn reserve-preset-btn" data-batch="50">50</button>
+      <button type="button" class="edit-btn reserve-preset-btn" data-batch="100">100</button>
+    </div>
+    <button type="button" id="btn-reserve-batch-apply" class="edit-btn edit-btn-primary">ПРИМЕНИТЬ СЕЙЧАС</button>
+    <div id="reserve-batch-info" class="reserve-batch-info">
+      <div>ТЕКУЩЕЕ ЗНАЧЕНИЕ: <span id="reserve-batch-current">10</span></div>
+      <div>НОВОЕ ЗНАЧЕНИЕ: <span id="reserve-batch-new">10</span></div>
+      <div>ДИАПАЗОН: 1–100</div>
+      <div id="reserve-batch-next">СЛЕДУЮЩАЯ ВОЛНА: МАКСИМУМ 10 БОЙЦОВ НА СТРАНУ</div>
+    </div>
+    <div id="reserve-batch-status" class="reserve-batch-status" aria-live="polite"></div>
+  </div>
+
+  <div id="confirm-dialog" class="hidden" role="dialog" aria-modal="true">
+    <div class="confirm-card">
+      <div id="confirm-title" class="confirm-title">Подтверждение</div>
+      <div id="confirm-body" class="confirm-body"></div>
+      <div class="confirm-actions">
+        <button type="button" id="confirm-ok" class="edit-btn edit-btn-danger">ПОДТВЕРДИТЬ</button>
+        <button type="button" id="confirm-cancel" class="edit-btn">ОТМЕНА</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="layout-toast" class="hidden" aria-live="polite"></div>
+
+  <div id="overlay-workspace">
+    <div id="battle-overlay-module" class="overlay-module" data-module="battle">
+      <div class="module-drag-handle edit-only" data-drag-for="battle">⋮⋮ БОЙ</div>
+      <div class="module-body">
         <header id="header">
           <div id="hud-bar">
             <div id="phase">ОЖИДАНИЕ</div>
@@ -20,24 +72,48 @@
             <div id="remaining">0 стран</div>
           </div>
           <div id="status-note">Загрузка…</div>
+          <div id="preview-diag" class="hidden preview-only"></div>
         </header>
 
-        <div id="columns">
-          <div id="left-panel" class="panel"></div>
-          <div id="right-panel" class="panel"></div>
-        </div>
+        <div id="countries-grid" class="countries-grid" aria-live="polite"></div>
 
         <div id="event-banner" class="hidden"></div>
       </div>
-
-      <div id="safe-frame" class="preview-only"></div>
-      <div id="center-zone" class="preview-only"></div>
-      <div id="left-guide" class="preview-only"></div>
-      <div id="right-guide" class="preview-only"></div>
-      <div id="bottom-guide" class="preview-only"></div>
-      <div id="preview-badge" class="preview-only">1080 × 1920 · TikTok</div>
     </div>
+
+    <div id="top-five-countries-module" class="overlay-module" data-module="top5">
+      <div class="module-drag-handle edit-only" data-drag-for="top5">⋮⋮ ТОП-5</div>
+      <div class="module-body top5-body">
+        <div class="top5-title">ТОП 5 СТРАН</div>
+        <div id="top5-list" aria-live="polite"></div>
+        <div id="top5-empty" class="top5-empty hidden">ПОКА НЕТ ПОБЕД</div>
+      </div>
+    </div>
+
+    <div id="record-overlay-module" class="overlay-module" data-module="record">
+      <div class="module-drag-handle edit-only" data-drag-for="record">⋮⋮ РЕКОРД</div>
+      <div class="module-body record-body">
+        <div class="record-title">РЕКОРД</div>
+        <div class="record-main">
+          <div id="record-flag" class="record-flag record-flag-empty" role="img" aria-label=""></div>
+          <div class="record-value-block">
+            <div id="record-value" class="record-value">0</div>
+            <div class="record-label">БОЙЦОВ</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="safe-frame" class="preview-only"></div>
+    <div id="center-zone" class="preview-only"></div>
+    <div id="left-guide" class="preview-only"></div>
+    <div id="right-guide" class="preview-only"></div>
+    <div id="bottom-guide" class="preview-only"></div>
+    <div id="preview-badge" class="preview-only">1080 × 1920 · TikTok</div>
+    <div id="capture-mode-badge" class="hidden preview-only">CAPTURE MODE</div>
+    <div id="module-pos-diag" class="hidden preview-only"></div>
   </div>
+
   <div id="connection-status" class="connection-status hidden" aria-live="polite">ONLINE</div>
   <script src="/overlay/tiktok/tiktok.js"></script>
 </body>

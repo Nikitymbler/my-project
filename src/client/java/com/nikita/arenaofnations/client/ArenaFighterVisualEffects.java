@@ -1,9 +1,7 @@
 package com.nikita.arenaofnations.client;
 
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -24,13 +22,12 @@ import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.phys.AABB;
 
 /**
  * Client-only particle accents by fighter tier.
+ * Budget / distance gated by {@link ArenaClientPerfRuntime}; no per-tick world class scan.
  */
 public final class ArenaFighterVisualEffects {
-	private static final double SEARCH_RADIUS = 96.0;
 	private static final double MOVE_POS_SQR = 0.0001;
 	private static final float ATTACK_ANIM_EPS = 0.01F;
 
@@ -38,9 +35,9 @@ public final class ArenaFighterVisualEffects {
 	private static final int TITAN_MOVE_INTERVAL = 5;
 	private static final int HERO_IDLE_INTERVAL = 15;
 
+	private static final Map<UUID, ArenaFighterEntity> TRACKED = new ConcurrentHashMap<>();
 	private static final Map<UUID, Float> PREVIOUS_ATTACK_ANIM = new ConcurrentHashMap<>();
 	private static final Map<UUID, Boolean> PREVIOUS_SWINGING = new ConcurrentHashMap<>();
-	private static final Map<UUID, Integer> PREVIOUS_TARGET_HURT = new ConcurrentHashMap<>();
 
 	private static final AtomicBoolean LOGGED_FIRST_WORLD_TICK = new AtomicBoolean(false);
 	private static final AtomicBoolean LOGGED_FIRST_FIGHTER = new AtomicBoolean(false);
@@ -57,6 +54,11 @@ public final class ArenaFighterVisualEffects {
 		}
 
 		ClientTickEvents.END_CLIENT_TICK.register(ArenaFighterVisualEffects::onEndClientTick);
+		ClientEntityEvents.ENTITY_LOAD.register((entity, world) -> {
+			if (entity instanceof ArenaFighterEntity fighter) {
+				TRACKED.put(fighter.getUUID(), fighter);
+			}
+		});
 		ClientEntityEvents.ENTITY_UNLOAD.register((entity, world) -> {
 			if (entity instanceof ArenaFighterEntity) {
 				forget(entity.getUUID());
@@ -68,18 +70,18 @@ public final class ArenaFighterVisualEffects {
 	}
 
 	public static void clear() {
+		TRACKED.clear();
 		PREVIOUS_ATTACK_ANIM.clear();
 		PREVIOUS_SWINGING.clear();
-		PREVIOUS_TARGET_HURT.clear();
 		LOGGED_FIRST_WORLD_TICK.set(false);
 		LOGGED_FIRST_FIGHTER.set(false);
 		LOGGED_FIRST_ATTACK.set(false);
 	}
 
 	private static void forget(UUID id) {
+		TRACKED.remove(id);
 		PREVIOUS_ATTACK_ANIM.remove(id);
 		PREVIOUS_SWINGING.remove(id);
-		PREVIOUS_TARGET_HURT.remove(id);
 	}
 
 	private static void onEndClientTick(Minecraft minecraft) {
@@ -98,43 +100,50 @@ public final class ArenaFighterVisualEffects {
 			ArenaOfNations.LOGGER.info("ArenaFighterVisualEffects: first client tick with loaded world");
 		}
 
-		AABB searchBox = player.getBoundingBox().inflate(SEARCH_RADIUS);
-		var nearby = level.getEntitiesOfClass(ArenaFighterEntity.class, searchBox);
-
-		if (!nearby.isEmpty() && LOGGED_FIRST_FIGHTER.compareAndSet(false, true)) {
-			ArenaOfNations.LOGGER.info(
-					"ArenaFighterVisualEffects: first ArenaFighterEntity found (count={})",
-					nearby.size());
+		if (TRACKED.isEmpty()) {
+			return;
+		}
+		if (ArenaClientPerfRuntime.particlesBudgetRemaining() <= 0
+				&& ArenaClientPerfRuntime.config().maxArenaParticlesPerTick() <= 0) {
+			return;
 		}
 
-		if (player.tickCount % 100 == 0 && !nearby.isEmpty()) {
+		double particleSqr = ArenaClientPerfRuntime.config().particleDistanceSqr();
+		double px = player.getX();
+		double py = player.getY();
+		double pz = player.getZ();
+
+		if (!TRACKED.isEmpty() && LOGGED_FIRST_FIGHTER.compareAndSet(false, true)) {
 			ArenaOfNations.LOGGER.info(
-					"ArenaFighterVisualEffects: nearby fighters in {} blocks: {}",
-					(int) SEARCH_RADIUS,
-					nearby.size());
+					"ArenaFighterVisualEffects: first ArenaFighterEntity tracked (count={})",
+					TRACKED.size());
 		}
 
-		Set<UUID> seen = new HashSet<>(Math.max(16, nearby.size() * 2));
-		for (ArenaFighterEntity fighter : nearby) {
-			if (!fighter.isAlive() || fighter.isRemoved()) {
+		Iterator<Map.Entry<UUID, ArenaFighterEntity>> it = TRACKED.entrySet().iterator();
+		while (it.hasNext()) {
+			Map.Entry<UUID, ArenaFighterEntity> entry = it.next();
+			ArenaFighterEntity fighter = entry.getValue();
+			if (fighter == null || !fighter.isAlive() || fighter.isRemoved() || fighter.level() != level) {
+				it.remove();
+				PREVIOUS_ATTACK_ANIM.remove(entry.getKey());
+				PREVIOUS_SWINGING.remove(entry.getKey());
 				continue;
 			}
-			seen.add(fighter.getUUID());
-			tickFighter(fighter, level);
-		}
-
-		Iterator<UUID> it = PREVIOUS_ATTACK_ANIM.keySet().iterator();
-		while (it.hasNext()) {
-			UUID id = it.next();
-			if (!seen.contains(id)) {
-				it.remove();
-				PREVIOUS_SWINGING.remove(id);
-				PREVIOUS_TARGET_HURT.remove(id);
+			double dx = fighter.getX() - px;
+			double dy = fighter.getY() - py;
+			double dz = fighter.getZ() - pz;
+			double distSqr = dx * dx + dy * dy + dz * dz;
+			if (distSqr > particleSqr) {
+				continue;
+			}
+			tickFighter(fighter, level, distSqr);
+			if (ArenaClientPerfRuntime.particlesBudgetRemaining() <= 0) {
+				break;
 			}
 		}
 	}
 
-	private static void tickFighter(ArenaFighterEntity fighter, ClientLevel level) {
+	private static void tickFighter(ArenaFighterEntity fighter, ClientLevel level, double distSqr) {
 		FighterTier tier = fighter.getArenaTier();
 		RandomSource random = level.random;
 		UUID id = fighter.getUUID();
@@ -145,38 +154,38 @@ public final class ArenaFighterVisualEffects {
 		switch (tier) {
 			case SCOUT -> {
 				if (movingOnGround && due(fighter.tickCount, scheduleOffset, SCOUT_MOVE_INTERVAL)) {
-					spawnFootParticles(level, fighter, random, ParticleTypes.CLOUD, 2);
+					spawnFootParticles(level, fighter, random, ParticleTypes.CLOUD, 2, distSqr, false);
 				}
 				if (attackStarted) {
-					spawnCritBurst(level, fighter, random, 8);
-					spawnDamageCueTowardTarget(level, fighter, random);
+					spawnCritBurst(level, fighter, random, 8, distSqr, true);
+					spawnDamageCueTowardTarget(level, fighter, random, distSqr);
 				}
 			}
 			case WARRIOR -> {
 				if (attackStarted) {
-					spawnCritBurst(level, fighter, random, 5);
+					spawnCritBurst(level, fighter, random, 5, distSqr, true);
 				}
 			}
 			case HEAVY -> {
 				if (attackStarted) {
-					spawnCritBurst(level, fighter, random, 6);
-					spawnSmoke(level, fighter, random, 2);
+					spawnCritBurst(level, fighter, random, 6, distSqr, true);
+					spawnSmoke(level, fighter, random, 2, distSqr, false);
 				}
 			}
 			case HERO -> {
 				if (due(fighter.tickCount, scheduleOffset, HERO_IDLE_INTERVAL)) {
-					spawnEnchantedIdle(level, fighter, random, 2);
+					spawnEnchantedIdle(level, fighter, random, 2, distSqr, false);
 				}
 				if (attackStarted) {
-					spawnCritBurst(level, fighter, random, 6);
+					spawnCritBurst(level, fighter, random, 6, distSqr, true);
 				}
 			}
 			case TITAN -> {
 				if (movingOnGround && due(fighter.tickCount, scheduleOffset, TITAN_MOVE_INTERVAL)) {
-					spawnFootParticles(level, fighter, random, ParticleTypes.POOF, 3);
+					spawnFootParticles(level, fighter, random, ParticleTypes.POOF, 3, distSqr, false);
 				}
 				if (attackStarted) {
-					spawnCritBurst(level, fighter, random, 8);
+					spawnCritBurst(level, fighter, random, 8, distSqr, true);
 				}
 			}
 		}
@@ -184,7 +193,7 @@ public final class ArenaFighterVisualEffects {
 
 	/**
 	 * Prefer real swing / attackAnim (synced after ArenaFighterEntity.doHurtTarget swings).
-	 * Fallback: target hurtTime rising while this fighter is in melee range.
+	 * Avoids per-tick hasLineOfSight scans used previously for hurt-time fallback.
 	 */
 	private static boolean detectAttackStart(ArenaFighterEntity fighter, UUID id) {
 		float attackAnim = fighter.getAttackAnim(0.0F);
@@ -195,18 +204,8 @@ public final class ArenaFighterVisualEffects {
 		boolean started = (!wasSwinging && swinging)
 				|| (prevAnim <= ATTACK_ANIM_EPS && attackAnim > ATTACK_ANIM_EPS);
 
-		LivingEntity target = fighter.getTarget();
-		int targetHurt = target != null ? target.hurtTime : 0;
-		int prevHurt = PREVIOUS_TARGET_HURT.getOrDefault(id, 0);
-		if (!started && target != null && prevHurt <= 0 && targetHurt > 0) {
-			if (fighter.distanceToSqr(target) <= 12.25 && fighter.hasLineOfSight(target)) {
-				started = true;
-			}
-		}
-
 		PREVIOUS_ATTACK_ANIM.put(id, attackAnim);
 		PREVIOUS_SWINGING.put(id, swinging);
-		PREVIOUS_TARGET_HURT.put(id, targetHurt);
 
 		if (started && LOGGED_FIRST_ATTACK.compareAndSet(false, true)) {
 			ArenaOfNations.LOGGER.info(
@@ -223,8 +222,8 @@ public final class ArenaFighterVisualEffects {
 		if (!fighter.onGround()) {
 			return false;
 		}
-		double dx = fighter.getX() - fighter.xOld;
-		double dz = fighter.getZ() - fighter.zOld;
+		double dx = fighter.getX() - fighter.xo;
+		double dz = fighter.getZ() - fighter.zo;
 		return dx * dx + dz * dz > MOVE_POS_SQR;
 	}
 
@@ -237,11 +236,17 @@ public final class ArenaFighterVisualEffects {
 			ArenaFighterEntity fighter,
 			RandomSource random,
 			SimpleParticleType type,
-			int count) {
-		float yaw = fighter.yBodyRot * ((float) Math.PI / 180.0F);
-		double sideX = -Mth.cos(yaw) * 0.22;
-		double sideZ = -Mth.sin(yaw) * 0.22;
-		for (int i = 0; i < count; i++) {
+			int count,
+			double distSqr,
+			boolean important) {
+		int remaining = Math.min(count, ArenaClientPerfRuntime.particlesBudgetRemaining());
+		for (int i = 0; i < remaining; i++) {
+			if (!ArenaClientPerfRuntime.tryConsumeParticle(distSqr, important)) {
+				return;
+			}
+			float yaw = fighter.yBodyRot * ((float) Math.PI / 180.0F);
+			double sideX = -Mth.cos(yaw) * 0.22;
+			double sideZ = -Mth.sin(yaw) * 0.22;
 			double side = (i % 2 == 0) ? 1.0 : -1.0;
 			double x = fighter.getX() + side * sideX + (random.nextDouble() - 0.5) * 0.35;
 			double y = fighter.getY() + 0.08 + random.nextDouble() * 0.06;
@@ -257,9 +262,19 @@ public final class ArenaFighterVisualEffects {
 		}
 	}
 
-	private static void spawnCritBurst(ClientLevel level, ArenaFighterEntity fighter, RandomSource random, int count) {
+	private static void spawnCritBurst(
+			ClientLevel level,
+			ArenaFighterEntity fighter,
+			RandomSource random,
+			int count,
+			double distSqr,
+			boolean important) {
+		int remaining = Math.min(count, ArenaClientPerfRuntime.particlesBudgetRemaining() + (important ? 1 : 0));
 		double baseY = fighter.getY() + fighter.getBbHeight() * 0.7;
-		for (int i = 0; i < count; i++) {
+		for (int i = 0; i < remaining; i++) {
+			if (!ArenaClientPerfRuntime.tryConsumeParticle(distSqr, important && i == 0)) {
+				return;
+			}
 			double x = fighter.getX() + (random.nextDouble() - 0.5) * 0.7;
 			double y = baseY + (random.nextDouble() - 0.5) * 0.35;
 			double z = fighter.getZ() + (random.nextDouble() - 0.5) * 0.7;
@@ -274,11 +289,14 @@ public final class ArenaFighterVisualEffects {
 		}
 	}
 
-	/** Stream-readable cue between attacker and current target on swing start. */
 	private static void spawnDamageCueTowardTarget(
 			ClientLevel level,
 			ArenaFighterEntity fighter,
-			RandomSource random) {
+			RandomSource random,
+			double distSqr) {
+		if (!ArenaClientPerfRuntime.tryConsumeParticle(distSqr, true)) {
+			return;
+		}
 		LivingEntity target = fighter.getTarget();
 		double x;
 		double y;
@@ -292,7 +310,12 @@ public final class ArenaFighterVisualEffects {
 			y = fighter.getY() + fighter.getBbHeight() * 0.7;
 			z = fighter.getZ();
 		}
-		for (int i = 0; i < 5; i++) {
+		level.addParticle(ParticleTypes.SWEEP_ATTACK, x, y, z, 0.0, 0.0, 0.0);
+		int extra = Math.min(4, ArenaClientPerfRuntime.particlesBudgetRemaining());
+		for (int i = 0; i < extra; i++) {
+			if (!ArenaClientPerfRuntime.tryConsumeParticle(distSqr, false)) {
+				return;
+			}
 			level.addParticle(
 					ParticleTypes.DAMAGE_INDICATOR,
 					x + (random.nextDouble() - 0.5) * 0.35,
@@ -302,11 +325,20 @@ public final class ArenaFighterVisualEffects {
 					0.05 + random.nextDouble() * 0.08,
 					(random.nextDouble() - 0.5) * 0.08);
 		}
-		level.addParticle(ParticleTypes.SWEEP_ATTACK, x, y, z, 0.0, 0.0, 0.0);
 	}
 
-	private static void spawnSmoke(ClientLevel level, ArenaFighterEntity fighter, RandomSource random, int count) {
-		for (int i = 0; i < count; i++) {
+	private static void spawnSmoke(
+			ClientLevel level,
+			ArenaFighterEntity fighter,
+			RandomSource random,
+			int count,
+			double distSqr,
+			boolean important) {
+		int remaining = Math.min(count, ArenaClientPerfRuntime.particlesBudgetRemaining());
+		for (int i = 0; i < remaining; i++) {
+			if (!ArenaClientPerfRuntime.tryConsumeParticle(distSqr, important)) {
+				return;
+			}
 			double x = fighter.getX() + (random.nextDouble() - 0.5) * 0.7;
 			double y = fighter.getY() + fighter.getBbHeight() * (0.45 + random.nextDouble() * 0.25);
 			double z = fighter.getZ() + (random.nextDouble() - 0.5) * 0.7;
@@ -321,8 +353,18 @@ public final class ArenaFighterVisualEffects {
 		}
 	}
 
-	private static void spawnEnchantedIdle(ClientLevel level, ArenaFighterEntity fighter, RandomSource random, int count) {
-		for (int i = 0; i < count; i++) {
+	private static void spawnEnchantedIdle(
+			ClientLevel level,
+			ArenaFighterEntity fighter,
+			RandomSource random,
+			int count,
+			double distSqr,
+			boolean important) {
+		int remaining = Math.min(count, ArenaClientPerfRuntime.particlesBudgetRemaining());
+		for (int i = 0; i < remaining; i++) {
+			if (!ArenaClientPerfRuntime.tryConsumeParticle(distSqr, important)) {
+				return;
+			}
 			double x = fighter.getX() + (random.nextDouble() - 0.5) * 0.7;
 			double y = fighter.getY() + fighter.getBbHeight() * (0.35 + random.nextDouble() * 0.5);
 			double z = fighter.getZ() + (random.nextDouble() - 0.5) * 0.7;

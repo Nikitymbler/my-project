@@ -219,7 +219,7 @@ public final class ArenaCoreRescueManager {
 		}
 		for (Country country : toEliminate) {
 			ArenaMatchManager.get().onCountryEliminated(server, country);
-			ArenaRoundHudSync.pushNow(server);
+			ArenaRoundHudSync.pushNowAfterElimination(server, country);
 		}
 	}
 
@@ -344,7 +344,7 @@ public final class ArenaCoreRescueManager {
 	private void expireRescue(MinecraftServer server, Country country) {
 		if (markRescueExpired(server, country)) {
 			ArenaMatchManager.get().onCountryEliminated(server, country);
-			ArenaRoundHudSync.pushNow(server);
+			ArenaRoundHudSync.pushNowAfterElimination(server, country);
 		}
 	}
 
@@ -459,7 +459,7 @@ public final class ArenaCoreRescueManager {
 		state.expireHandled = true;
 		ArenaCoreManager.get().markEliminated(server, country);
 		ArenaMatchManager.get().onCountryEliminated(server, country);
-		ArenaRoundHudSync.pushNow(server);
+		ArenaRoundHudSync.pushNowAfterElimination(server, country);
 	}
 
 	private static final class RescueState {

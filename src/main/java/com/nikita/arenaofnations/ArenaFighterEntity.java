@@ -436,6 +436,16 @@ public class ArenaFighterEntity extends Wolf {
 		return Country.RU;
 	}
 
+	/** Synced country id string without lookup — for client cache keys. */
+	public String getSyncedCountryId() {
+		return entityData.get(COUNTRY_ID);
+	}
+
+	/** Synced tier id string without lookup — for client cache keys. */
+	public String getSyncedTierId() {
+		return entityData.get(TIER_ID);
+	}
+
 	public FighterTier getArenaTier() {
 		FighterTier fromData = FighterTier.byId(entityData.get(TIER_ID));
 		if (fromData != null) {

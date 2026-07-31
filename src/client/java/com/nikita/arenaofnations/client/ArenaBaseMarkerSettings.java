@@ -3,8 +3,10 @@ package com.nikita.arenaofnations.client;
 import java.util.List;
 import java.util.Locale;
 
+import com.nikita.arenaofnations.ArenaBaseMarkerLayout;
+
 /**
- * Client toggle and diagnostics for world-space base markers.
+ * Client toggle and diagnostics for world-space base markers / country labels.
  */
 public final class ArenaBaseMarkerSettings {
 	public static final double MAX_RENDER_DISTANCE = 120.0D;
@@ -14,6 +16,14 @@ public final class ArenaBaseMarkerSettings {
 	private static int lastActiveMarkers;
 	private static int lastRenderedMarkers;
 	private static List<MarkerDiag> lastDiags = List.of();
+
+	private static int labelsExpected;
+	private static int labelsRenderAttempted;
+	private static int labelsActuallyDrawn;
+	private static List<String> lastRenderedCountryLabels = List.of();
+	private static String lastLabelWorldPositionRU = "-";
+	private static String lastLabelDistanceRU = "-";
+	private static String lastLabelRenderError = "-";
 
 	private ArenaBaseMarkerSettings() {
 	}
@@ -30,6 +40,23 @@ public final class ArenaBaseMarkerSettings {
 		lastActiveMarkers = active;
 		lastRenderedMarkers = rendered;
 		lastDiags = diags == null ? List.of() : List.copyOf(diags);
+	}
+
+	public static void recordLabelRenderStats(
+			int expected,
+			int attempted,
+			int drawn,
+			List<String> labels,
+			String ruWorldPos,
+			String ruDistance,
+			String error) {
+		labelsExpected = Math.max(0, expected);
+		labelsRenderAttempted = Math.max(0, attempted);
+		labelsActuallyDrawn = Math.max(0, drawn);
+		lastRenderedCountryLabels = labels == null ? List.of() : List.copyOf(labels);
+		lastLabelWorldPositionRU = ruWorldPos == null || ruWorldPos.isBlank() ? "-" : ruWorldPos;
+		lastLabelDistanceRU = ruDistance == null || ruDistance.isBlank() ? "-" : ruDistance;
+		lastLabelRenderError = error == null || error.isBlank() ? "-" : error;
 	}
 
 	public static int lastActiveMarkers() {
@@ -49,6 +76,18 @@ public final class ArenaBaseMarkerSettings {
 				.append("client_state_entries=").append(clientStateEntries).append('\n')
 				.append("missing_textures=").append(ArenaBaseFlagTextures.countMissing()).append('\n')
 				.append("max_render_distance=").append((int) MAX_RENDER_DISTANCE).append('\n')
+				.append("baseCountryLabelsExpected=").append(labelsExpected).append('\n')
+				.append("baseCountryLabelsRenderAttempted=").append(labelsRenderAttempted).append('\n')
+				.append("baseCountryLabelsActuallyDrawn=").append(labelsActuallyDrawn).append('\n')
+				.append("lastRenderedCountryLabels=")
+				.append(lastRenderedCountryLabels.isEmpty() ? "-" : String.join(",", lastRenderedCountryLabels))
+				.append('\n')
+				.append("lastLabelWorldPositionRU=").append(lastLabelWorldPositionRU).append('\n')
+				.append("lastLabelDistanceRU=").append(lastLabelDistanceRU).append('\n')
+				.append("lastLabelRenderError=").append(lastLabelRenderError).append('\n')
+				.append("nameDisplayMode=SEE_THROUGH\n")
+				.append("namePackedLight=FULL_BRIGHT\n")
+				.append("nameWorldGap=").append(ArenaBaseMarkerLayout.NAME_WORLD_GAP).append('\n')
 				.append("first5:");
 		if (lastDiags.isEmpty()) {
 			builder.append(" (none)");

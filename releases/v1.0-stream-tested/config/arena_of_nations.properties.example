@@ -1,0 +1,42 @@
+﻿# Arena of Nations — example config (v1.0-stream-tested)
+# Copy to <game>/config/arena_of_nations.properties and edit as needed.
+# Do NOT commit or redistribute a copy that contains a real StreamToEarn token.
+
+waiting_seconds=60
+battle_seconds=600
+break_seconds=15
+join_closes_before_end_seconds=120
+max_waiting_fighters=10
+reserve_wave_size=10
+reserve_wave_interval_ticks=40
+scout_min_coins=1
+warrior_min_coins=10
+heavy_min_coins=50
+hero_min_coins=200
+titan_min_coins=1000
+core_max_health=200
+core_rescue_seconds=30
+core_rescue_health_percent=50
+hud_enabled=false
+hud_update_ticks=10
+hud_view_distance=128
+default_hud_mode=off
+viewer_events_enabled=true
+viewer_event_queue_limit=10000
+viewer_event_dedup_seconds=600
+s2e_http_enabled=false
+s2e_http_port=8765
+s2e_http_token=
+overlay_enabled=true
+overlay_http_enabled=true
+overlay_http_bind=127.0.0.1
+overlay_http_port=8766
+overlay_bind_address=127.0.0.1
+overlay_port=8766
+overlay_poll_ms=750
+overlay_poll_interval_ms=750
+overlay_https_enabled=true
+overlay_https_hostname=localhost
+overlay_public_enabled=false
+overlay_public_base_url=
+overlay_public_path=/overlay/tiktok

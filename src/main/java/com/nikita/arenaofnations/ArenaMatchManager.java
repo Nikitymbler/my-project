@@ -3,6 +3,7 @@ package com.nikita.arenaofnations;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Deque;
 import java.util.EnumMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -39,10 +40,11 @@ public final class ArenaMatchManager {
 	private final LinkedHashSet<Country> activeCountries = new LinkedHashSet<>();
 	/** Countries that joined this round; never shrinks on elimination (used for score tiers). */
 	private final LinkedHashSet<Country> roundParticipants = new LinkedHashSet<>();
-	private final Map<Country, Queue<PendingFighter>> reserves = new EnumMap<>(Country.class);
+	private final Map<Country, Deque<PendingFighter>> reserves = new EnumMap<>(Country.class);
 	private final Queue<PendingFighter> nextRoundQueue = new ArrayDeque<>();
 	private final Map<Country, Integer> giftCounts = new EnumMap<>(Country.class);
 	private final Map<Country, Integer> spawnCounters = new EnumMap<>(Country.class);
+	private final Map<Country, Integer> fightersSentThisRound = new EnumMap<>(Country.class);
 	private final Map<Country, Double> damageDealt = new EnumMap<>(Country.class);
 	private final Map<Country, Integer> countryBaseSlots = new EnumMap<>(Country.class);
 	private final boolean[] occupiedBaseSlots = new boolean[ArenaCountryBaseLayout.BASE_SLOT_COUNT];
@@ -56,6 +58,7 @@ public final class ArenaMatchManager {
 			reserves.put(country, new ArrayDeque<>());
 			giftCounts.put(country, 0);
 			spawnCounters.put(country, 0);
+			fightersSentThisRound.put(country, 0);
 			damageDealt.put(country, 0.0);
 			lastWaveReleased.put(country, 0);
 		}
@@ -93,6 +96,7 @@ public final class ArenaMatchManager {
 		ArenaOverlayHttpServer.register();
 		ArenaOverlayStateService.register();
 		ArenaOverlayCommands.register();
+		ArenaFighterRecordCommands.register();
 		ArenaCoreDisplayManager.register();
 		ArenaBaseMarkerCommands.register();
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, damageSource) -> {
@@ -480,6 +484,9 @@ public final class ArenaMatchManager {
 							+ coins
 							+ " бойцов сохранены в очередь следующего раунда."));
 		}
+
+		// Browser overlay + world base markers (flag/name) must update immediately.
+		ArenaRoundHudSync.pushNow(server);
 	}
 
 	public synchronized void reset(MinecraftServer server) {
@@ -492,6 +499,7 @@ public final class ArenaMatchManager {
 			reserves.get(country).clear();
 			giftCounts.put(country, 0);
 			spawnCounters.put(country, 0);
+			fightersSentThisRound.put(country, 0);
 		}
 		clearDamageStats();
 		clearBaseLayout();
@@ -511,6 +519,7 @@ public final class ArenaMatchManager {
 		ArenaMeleeDiagnostics.reset();
 		ArenaHudManager.get().clearAll(server);
 		broadcast(server, Component.literal("Раунд арены сброшен. Состояние: IDLE"));
+		ArenaRoundHudSync.pushNow(server);
 	}
 
 	/**
@@ -569,6 +578,7 @@ public final class ArenaMatchManager {
 		activeCountries.clear();
 		roundParticipants.clear();
 		clearBaseLayout();
+		clearFightersSentThisRound();
 		addParticipant(server, pending.getCountry());
 		clearDamageStats();
 		ArenaCoreRescueManager.get().clearAll();
@@ -730,18 +740,47 @@ public final class ArenaMatchManager {
 
 	private void acceptFighter(MinecraftServer server, ServerLevel level, PendingFighter pending) {
 		// Unlimited live-field mode: gifts always enqueue to reserve.
-		reserves.get(pending.getCountry()).add(pending);
+		Country country = pending.getCountry();
+		reserves.get(country).add(pending);
+		int sent = fightersSentThisRound.getOrDefault(country, 0) + 1;
+		fightersSentThisRound.put(country, sent);
+		if (ArenaScoreManager.tryUpdateFighterRoundRecord(server, country, sent)) {
+			// Overlay snapshot must refresh immediately when the persistent record changes.
+			ArenaRoundHudSync.pushNow(server);
+		}
 	}
 
-	private void spawnFighter(MinecraftServer server, ServerLevel level, PendingFighter pending) {
+	public int getFightersSentThisRound(Country country) {
+		return fightersSentThisRound.getOrDefault(country, 0);
+	}
+
+	public Map<Country, Integer> getFightersSentThisRoundSnapshot() {
+		EnumMap<Country, Integer> copy = new EnumMap<>(Country.class);
+		for (Country country : Country.values()) {
+			int value = fightersSentThisRound.getOrDefault(country, 0);
+			if (value > 0) {
+				copy.put(country, value);
+			}
+		}
+		return copy;
+	}
+
+	private void clearFightersSentThisRound() {
+		for (Country country : Country.values()) {
+			fightersSentThisRound.put(country, 0);
+		}
+	}
+
+	private boolean spawnFighter(MinecraftServer server, ServerLevel level, PendingFighter pending) {
 		int index = spawnCounters.get(pending.getCountry());
 		spawnCounters.put(pending.getCountry(), index + 1);
 		ArenaSpawns.Target target = ArenaSpawns.resolve(server, level, arenaCenter, pending.getCountry(), index);
 		if (target == null) {
 			ArenaOfNations.LOGGER.error("Failed to resolve spawn for {}", pending.getCountry().getId());
-			return;
+			return false;
 		}
 		FighterFactory.create(target.level(), target.pos(), pending.getCountry(), pending.getTier());
+		return true;
 	}
 
 	private synchronized void tick(MinecraftServer server) {
@@ -768,27 +807,34 @@ public final class ArenaMatchManager {
 
 	private void tickWaiting(MinecraftServer server, ServerLevel level) {
 		remainingTicks--;
-		if (remainingTicks > 0) {
+		if (remainingTicks <= 0) {
+			Country holder = activeCountries.isEmpty() ? null : activeCountries.iterator().next();
+			clearAllFighters(server);
+			clearReserves();
+
+			if (holder != null) {
+				lastRoundWinner = holder;
+				lastRoundWasTie = false;
+				lastRoundParticipantCount = 1;
+				broadcast(server, Component.literal(holder.getDisplayName() + " удержала арену без соперника!"));
+				ArenaScoreManager.awardHold(server, holder);
+			} else {
+				lastRoundWinner = null;
+				lastRoundWasTie = true;
+				lastRoundParticipantCount = 0;
+			}
+
+			beginBreak(server);
 			return;
 		}
 
-		Country holder = activeCountries.isEmpty() ? null : activeCountries.iterator().next();
-		clearAllFighters(server);
-		clearReserves();
-
-		if (holder != null) {
-			lastRoundWinner = holder;
-			lastRoundWasTie = false;
-			lastRoundParticipantCount = 1;
-			broadcast(server, Component.literal(holder.getDisplayName() + " удержала арену без соперника!"));
-			ArenaScoreManager.awardHold(server, holder);
-		} else {
-			lastRoundWinner = null;
-			lastRoundWasTie = true;
-			lastRoundParticipantCount = 0;
+		// Same wave cadence as BATTLE; WAITING_FIELD_LIMIT applied inside releaseReserveWaves.
+		battleTicksElapsed++;
+		ArenaConfig config = ArenaConfig.get();
+		if (config.getReserveWaveIntervalTicks() > 0
+				&& battleTicksElapsed % config.getReserveWaveIntervalTicks() == 0) {
+			releaseReserveWaves(level);
 		}
-
-		beginBreak(server);
 	}
 
 	private void tickBattle(MinecraftServer server, ServerLevel level) {
@@ -819,6 +865,7 @@ public final class ArenaMatchManager {
 		}
 
 		ArenaCoreManager.get().updateCoreProtectionStates(server);
+		ArenaCoreManager.get().tickCoreRegen(server);
 
 		if (remainingTicks > 0) {
 			return;
@@ -950,7 +997,7 @@ public final class ArenaMatchManager {
 	}
 
 	private void releaseReserveWaves(ServerLevel level) {
-		ArenaConfig config = ArenaConfig.get();
+		ArenaReserveRuntimeSettings settings = ArenaReserveRuntimeSettings.get();
 		ArenaSpawns.beginBatch();
 		MinecraftServer server = level.getServer();
 		ServerLevel fightLevel = ArenaSpawns.resolveFightLevel(server, level);
@@ -960,22 +1007,64 @@ public final class ArenaMatchManager {
 			lastWaveReleased.put(country, 0);
 		}
 
+		// Read live batch once per planned wave (not cached at round start).
+		int configuredBatch = settings.getReserveReleaseBatch();
+		int activeLimit = settings.getActiveFightersLimit();
+		boolean waitingPhase = state == ArenaMatchState.WAITING_FOR_OPPONENT;
+
 		for (Country country : activeCountries) {
 			if (ArenaCoreRescueManager.get().isEliminated(country)) {
 				continue;
 			}
-			Queue<PendingFighter> reserve = reserves.get(country);
-			int waveCap = Math.max(0, config.getReserveWaveSize());
-			int toRelease = Math.min(waveCap, reserve.size());
+			Deque<PendingFighter> reserve = reserves.get(country);
+			int reserveBefore = reserve.size();
+			// Uncached during WAITING so same-tick cache cannot allow field > WAITING_FIELD_LIMIT.
+			int living = waitingPhase
+					? countLivingFightersUncached(fightLevel, country)
+					: countLivingFighters(fightLevel, country);
+			int availableSlots = ArenaReserveReleaseMath.availableActiveSlots(activeLimit, living);
+			int waitingSlots = waitingPhase
+					? ArenaReserveReleaseMath.waitingRemainingSlots(
+							ArenaReserveReleaseMath.WAITING_FIELD_LIMIT, living)
+					: Integer.MAX_VALUE;
+			int effectiveSlots = waitingSlots == Integer.MAX_VALUE
+					? availableSlots
+					: Math.min(availableSlots, waitingSlots);
+			int toRelease = ArenaReserveReleaseMath.computeActualRelease(
+					configuredBatch,
+					reserveBefore,
+					availableSlots,
+					waitingSlots);
 			int released = 0;
+			String waveError = "";
 
 			while (released < toRelease && !reserve.isEmpty()) {
 				PendingFighter pending = reserve.poll();
-				spawnFighter(server, fightLevel, pending);
-				released++;
+				if (pending == null) {
+					break;
+				}
+				if (spawnFighter(server, fightLevel, pending)) {
+					released++;
+				} else {
+					// Keep fighter in reserve — do not lose on partial spawn failure.
+					reserve.addFirst(pending);
+					waveError = "spawn_failed:" + country.getCode();
+					break;
+				}
 			}
+			settings.recordWaveAttempt(
+					country,
+					configuredBatch,
+					reserveBefore,
+					effectiveSlots,
+					released,
+					waveError);
 			lastWaveReleased.put(country, released);
 			lastWaveReleasedTotal += released;
+		}
+
+		if (lastWaveReleasedTotal > 0) {
+			invalidateLivingCountsCache();
 		}
 	}
 
@@ -1056,6 +1145,7 @@ public final class ArenaMatchManager {
 		remainingTicks = config.getBreakSeconds() * 20;
 		activeCountries.clear();
 		roundParticipants.clear();
+		clearFightersSentThisRound();
 		clearBaseLayout();
 		ArenaCoreCombatManager.get().clearAll(server);
 		ArenaCoreRescueManager.get().clearAll();
@@ -1133,6 +1223,7 @@ public final class ArenaMatchManager {
 
 		builder.append("Живые бойцы: ").append(countLivingFighters(level)).append('\n');
 		builder.append("Очередь следующего раунда: ").append(getNextRoundQueueSize()).append('\n');
+		builder.append(ArenaReserveRuntimeSettings.get().buildDiagnosticLines()).append('\n');
 
 		LinkedHashSet<Country> listed = new LinkedHashSet<>(roundParticipants);
 		listed.addAll(activeCountries);
