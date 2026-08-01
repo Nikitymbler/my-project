@@ -31,29 +31,11 @@ Get-Process -Name python,python3,py -ErrorAction SilentlyContinue |
 
 Start-Sleep -Seconds 1
 
-foreach ($name in @('ste_server.py', 'START_TANK_RUSH_S2E.cmd', 'STREAMTOEARN_LINKS.txt')) {
+foreach ($name in @('ste_server.py', 'START_TANK_RUSH_S2E.cmd', 'STREAMTOEARN_LINKS.txt', 'Tank_Rush_LIVE_VIEWER_BINDING.html')) {
     $url = "$rawBase/$name"
     $out = Join-Path $target $name
     Write-Host "Downloading $name ..."
     Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
-}
-
-# Keep existing game HTML if present in Desktop\lplp or common zip extract paths
-$gameName = 'Tank_Rush_LIVE_VIEWER_BINDING.html'
-$gameTarget = Join-Path $target $gameName
-if (-not (Test-Path $gameTarget)) {
-    $candidates = @(
-        (Join-Path $env:USERPROFILE "Desktop\$gameName"),
-        (Join-Path $env:USERPROFILE "Downloads\$gameName"),
-        (Join-Path $env:USERPROFILE "Desktop\lplp\$gameName")
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) {
-            Copy-Item -Force $c $gameTarget
-            Write-Host "Copied game HTML from $c"
-            break
-        }
-    }
 }
 
 Write-Host 'Starting bridge ...'
@@ -77,6 +59,7 @@ Write-Host ''
 Write-Host 'GIFT:'
 Write-Host 'http://127.0.0.1:8080/gift?viewerId={uniqueid}&viewerName={nickname}&coins={coins}&giftcount={giftcount}&giftName={giftname}&eventId={eventid}'
 Write-Host ''
+Write-Host 'ИГРА:    http://127.0.0.1:8080/game   << ОТКРЫВАЙ ЭТО, не FIXED_v3 с диска'
 Write-Host 'Статус:  http://127.0.0.1:8080/'
 Write-Host 'Health:  http://127.0.0.1:8080/health  (version должен быть 2)'
 Write-Host 'Тест:    http://127.0.0.1:8080/chat?viewerId=test1&viewerName=Test&message=ru'

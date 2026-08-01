@@ -27,7 +27,7 @@ where py >nul 2>nul
 if not errorlevel 1 (
     start "Tank Rush StreamToEarn Bridge" cmd /k "cd /d ""%~dp0"" ^& py -3 -u ste_server.py"
     timeout /t 2 /nobreak >nul
-    start "" "http://127.0.0.1:8080/"
+    start "" "http://127.0.0.1:8080/game"
     exit /b 0
 )
 
@@ -35,7 +35,7 @@ where python >nul 2>nul
 if not errorlevel 1 (
     start "Tank Rush StreamToEarn Bridge" cmd /k "cd /d ""%~dp0"" ^& python -u ste_server.py"
     timeout /t 2 /nobreak >nul
-    start "" "http://127.0.0.1:8080/"
+    start "" "http://127.0.0.1:8080/game"
     exit /b 0
 )
 

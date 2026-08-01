@@ -7,9 +7,13 @@ http://127.0.0.1:8080/chat?viewerId={uniqueid}&viewerName={nickname}&message={co
 GIFT:
 http://127.0.0.1:8080/gift?viewerId={uniqueid}&viewerName={nickname}&coins={coins}&giftcount={giftcount}&giftName={giftname}&eventId={eventid}
 
-Статус (обновляется сам): http://127.0.0.1:8080/
+ИГРА (танки):            http://127.0.0.1:8080/game
+Статус:                   http://127.0.0.1:8080/
 Health (version=2):       http://127.0.0.1:8080/health
 
-Ручной тест в браузере:
+НЕ открывай Tank_Rush_LIVE_FIXED_v3.html с диска — он не слушает мост.
+Только http://127.0.0.1:8080/game
+
+Ручной тест (сначала открой /game):
 1) http://127.0.0.1:8080/chat?viewerId=test1&viewerName=Test&message=ru
 2) http://127.0.0.1:8080/gift?viewerId=test1&viewerName=Test&coins=5&giftcount=1&giftName=Rose
