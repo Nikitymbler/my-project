@@ -1,7 +1,7 @@
 ﻿# Arena of Nations — Project Status
 
 Документ состояния разработки. Источник правды — **текущий код**, не переписка.
-Дата снимка: 31 июля 2026.
+Дата снимка: 1 августа 2026.
 
 ---
 
@@ -515,7 +515,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ~15–20 последних этапов по коду. Без простыней Java.
 
-90. **Fighter flag mirror + US stars (31.07/01.08)** — бойцы: тот же two-sided UV path, что у баз (`blitFlagQuadFront`/`Back`); текстуры бойцов → `flags_hd` (как базы). США: SVG polygon-звёзды + PNG. Скрипт `APPLY_FLAG_FIX.cmd` (hard reset+build). Нужен полный рестарт клиента + F3+T.
+90. **Fighter flag mirror + US stars (31.07/01.08)** — бойцы: тот же two-sided UV path, что у баз (`blitFlagQuadFront`/`Back`); текстуры бойцов → `flags_hd` (как базы). США: SVG 50×`<polygon>` (не marker-mid) + PNG `flags/us` 128×80, `flags_hd/us` 256×160, `overlay/tiktok/flags/us`. `APPLY_FLAG_FIX.cmd` — только локальный `gradlew.bat build` (без git pull/reset). START_ARENA = `runClient`. Проверено: `clean build` SUCCESS; jar canton white stars; Minecraft не запускался.
 
 89. **S2E gift HTTP 400 fix (31.07)** — Play/BOM/`{coins}`; permissive defaults; CORS; `last HTTP body=`; `TEST_S2E_NOW.cmd`. Успешный ответ gift/chat: **HTTP 200** (+ `ok`/`success`) вместо 202 — StreamToEarn больше не показывает ложный fail toast. Нужен pull+build+рестарт мира. Chat Play (`message":"ru"`) до Gift, иначе `country_not_selected`.
 

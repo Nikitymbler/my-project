@@ -4,35 +4,40 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo ============================================
-echo   Обновление флагов бойцов + США
+echo   Обновление флагов бойцов + США (локально)
 echo ============================================
+echo.
+echo Этот скрипт НЕ делает git pull/reset.
+echo Собирает мод из текущего исходника на диске.
 echo.
 echo Закрой Minecraft полностью, потом жми любую клавишу...
 pause >nul
 
 echo.
-echo git fetch + hard reset на origin/main ...
-git fetch origin
-if errorlevel 1 goto :fail
-git reset --hard origin/main
-if errorlevel 1 goto :fail
-git clean -fd
-if errorlevel 1 goto :fail
-
-echo.
-echo git log -1:
-git log -1 --oneline
-
-echo.
-echo Сборка...
+echo Сборка gradlew.bat build ...
 call gradlew.bat build
 if errorlevel 1 goto :fail
 
+set "JAR=%~dp0build\libs\arena_of_nations-1.0.0.jar"
+if not exist "%JAR%" (
+  echo FAIL: не найден %JAR%
+  goto :fail
+)
+
 echo.
-echo BUILD OK.
-echo 1. Открой Minecraft заново
+echo JAR готов: %JAR%
+
+if exist "%~dp0run\mods" (
+  echo Копирую в run\mods ...
+  del /q "%~dp0run\mods\arena_of_nations*.jar" 2>nul
+  copy /y "%JAR%" "%~dp0run\mods\arena_of_nations-1.0.0.jar" >nul
+)
+
+echo.
+echo BUILD OK. START_ARENA.cmd = runClient (сборка достаточна).
+echo 1. Открой Minecraft заново ^(START_ARENA.cmd^)
 echo 2. Зайди в мир
-echo 3. F3+T в игре (перезагрузка текстур)
+echo 3. F3+T в игре ^(перезагрузка текстур^)
 echo.
 echo Ожидай: у бойца синий угол СЛЕВА как у базы, у США видны звёзды.
 echo.
