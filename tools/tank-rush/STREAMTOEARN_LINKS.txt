@@ -1,0 +1,13 @@
+TANK RUSH — StreamToEarn (привязка чата)
+Method: GET | Body: пусто | Порт: 8080
+
+CHAT:
+http://127.0.0.1:8080/chat?viewerId={uniqueid}&viewerName={nickname}&message={comment}&eventId={eventid}
+
+GIFT:
+http://127.0.0.1:8080/gift?viewerId={uniqueid}&viewerName={nickname}&coins={coins}&giftcount={giftcount}&giftName={giftname}&eventId={eventid}
+
+Игра: http://127.0.0.1:8080/
+Health: http://127.0.0.1:8080/health
+
+Проверка: зритель пишет ru → дарит подарок → HP у России.
