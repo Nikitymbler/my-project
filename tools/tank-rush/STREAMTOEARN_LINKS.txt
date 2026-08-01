@@ -1,0 +1,19 @@
+TANK RUSH — StreamToEarn (привязка на сервере)
+Method: GET | Body: пусто | Порт: 8080
+
+CHAT:
+http://127.0.0.1:8080/chat?viewerId={uniqueid}&viewerName={nickname}&message={comment}&eventId={eventid}
+
+GIFT:
+http://127.0.0.1:8080/gift?viewerId={uniqueid}&viewerName={nickname}&coins={coins}&giftcount={giftcount}&giftName={giftname}&eventId={eventid}
+
+ИГРА (танки):            http://127.0.0.1:8080/game
+Статус:                   http://127.0.0.1:8080/
+Health (version=2):       http://127.0.0.1:8080/health
+
+НЕ открывай Tank_Rush_LIVE_FIXED_v3.html с диска — он не слушает мост.
+Только http://127.0.0.1:8080/game
+
+Ручной тест (сначала открой /game):
+1) http://127.0.0.1:8080/chat?viewerId=test1&viewerName=Test&message=ru
+2) http://127.0.0.1:8080/gift?viewerId=test1&viewerName=Test&coins=5&giftcount=1&giftName=Rose

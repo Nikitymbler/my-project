@@ -515,6 +515,8 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ~15–20 последних этапов по коду. Без простыней Java.
 
+91. **Tank Rush S2E binding helpers (01.08)** — `tools/tank-rush/ste_server.py` **v2** + `Tank_Rush_LIVE_VIEWER_BINDING.html` на **8080**. Игра: `http://127.0.0.1:8080/game` (не `FIXED_v3` с диска). Привязка на сервере; gift без чата → `not_bound`. Install скачивает HTML. Проверено curl chat→gift; Minecraft/Gradle не трогались.
+
 90. **Fighter flag mirror + US stars (31.07/01.08)** — бойцы: тот же two-sided UV path, что у баз (`blitFlagQuadFront`/`Back`); текстуры бойцов → `flags_hd` (как базы). США: SVG 50×`<polygon>` (не marker-mid) + PNG `flags/us` 128×80, `flags_hd/us` 256×160, `overlay/tiktok/flags/us`. `APPLY_FLAG_FIX.cmd` — только локальный `gradlew.bat build` (без git pull/reset). START_ARENA = `runClient`. Проверено: `clean build` SUCCESS; jar canton white stars; Minecraft не запускался.
 
 89. **S2E gift HTTP 400 fix (31.07)** — Play/BOM/`{coins}`; permissive defaults; CORS; `last HTTP body=`; `TEST_S2E_NOW.cmd`. Успешный ответ gift/chat: **HTTP 200** (+ `ok`/`success`) вместо 202 — StreamToEarn больше не показывает ложный fail toast. Нужен pull+build+рестарт мира. Chat Play (`message":"ru"`) до Gift, иначе `country_not_selected`.
