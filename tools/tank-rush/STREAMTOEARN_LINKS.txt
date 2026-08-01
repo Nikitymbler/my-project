@@ -1,4 +1,4 @@
-TANK RUSH — StreamToEarn (привязка чата)
+TANK RUSH — StreamToEarn (привязка на сервере)
 Method: GET | Body: пусто | Порт: 8080
 
 CHAT:
@@ -7,7 +7,9 @@ http://127.0.0.1:8080/chat?viewerId={uniqueid}&viewerName={nickname}&message={co
 GIFT:
 http://127.0.0.1:8080/gift?viewerId={uniqueid}&viewerName={nickname}&coins={coins}&giftcount={giftcount}&giftName={giftname}&eventId={eventid}
 
-Игра: http://127.0.0.1:8080/
-Health: http://127.0.0.1:8080/health
+Статус (обновляется сам): http://127.0.0.1:8080/
+Health (version=2):       http://127.0.0.1:8080/health
 
-Проверка: зритель пишет ru → дарит подарок → HP у России.
+Ручной тест в браузере:
+1) http://127.0.0.1:8080/chat?viewerId=test1&viewerName=Test&message=ru
+2) http://127.0.0.1:8080/gift?viewerId=test1&viewerName=Test&coins=5&giftcount=1&giftName=Rose
