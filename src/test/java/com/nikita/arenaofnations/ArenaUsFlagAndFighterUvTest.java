@@ -17,13 +17,15 @@ class ArenaUsFlagAndFighterUvTest {
 	}
 
 	@Test
-	void fighterFlagUvIsFlippedAgainstBillboardMirror() throws Exception {
+	void fighterFlagMatchesBaseTwoSidedUvPath() throws Exception {
 		String source = Files.readString(
 				Path.of("src/client/java/com/nikita/arenaofnations/client/ArenaFighterOverheadRenderer.java"));
-		assertTrue(source.contains("U is flipped"));
-		// left vertex uses u=1 (hoist after scale(-s,-s,s))
-		assertTrue(source.contains("left, bottom, z, 1.0F, 1.0F"));
-		assertTrue(source.contains("right, bottom, z, 0.0F, 1.0F"));
+		assertTrue(source.contains("blitFlagQuadFront"));
+		assertTrue(source.contains("blitFlagQuadBack"));
+		assertTrue(source.contains("Same two-sided path as ArenaBaseMarkerRenderer"));
+		String visuals = Files.readString(
+				Path.of("src/client/java/com/nikita/arenaofnations/client/ArenaFighterFlagVisuals.java"));
+		assertTrue(visuals.contains("textures/gui/flags_hd/"));
 	}
 
 	@Test

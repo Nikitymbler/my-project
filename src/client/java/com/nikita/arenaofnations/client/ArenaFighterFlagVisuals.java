@@ -44,11 +44,12 @@ public final class ArenaFighterFlagVisuals {
 
 	static {
 		for (Country country : Country.values()) {
-			FLAG_TEXTURES.put(country, ArenaOfNations.id("textures/gui/flags/" + country.getId() + ".png"));
+			// Same HD atlas as base markers — keeps US stars / hoist details consistent.
+			FLAG_TEXTURES.put(country, ArenaOfNations.id("textures/gui/flags_hd/" + country.getId() + ".png"));
 		}
 	}
 
-	/** Logical half-extents for 128×80 flag texture (world aspect 8:5). */
+	/** Logical half-extents for 256×160 HD flag texture (world aspect 8:5). */
 	public static final float FLAG_HALF_WIDTH = 16.0F;
 	public static final float FLAG_HALF_HEIGHT = 10.0F;
 

@@ -120,14 +120,29 @@ public final class ArenaFighterOverheadRenderer {
 
 		RenderType flagType = RenderType.entityCutoutNoCull(flagTexture);
 		VertexConsumer flagConsumer = buffer.getBuffer(flagType);
-		blitFlagQuad(
-				poseStack,
+		// Same two-sided path as ArenaBaseMarkerRenderer: front + back with opposite U.
+		// After scale(-s,-s,s) the visible face matches base markers (hoist on viewer's left).
+		blitFlagQuadFront(
+				pose,
 				flagConsumer,
 				-halfW,
 				-halfH,
 				halfW,
 				halfH,
 				Z_FLAG,
+				flagTintR,
+				flagTintG,
+				flagTintB,
+				light,
+				overlay);
+		blitFlagQuadBack(
+				pose,
+				flagConsumer,
+				-halfW,
+				-halfH,
+				halfW,
+				halfH,
+				Z_FLAG + 0.001F,
 				flagTintR,
 				flagTintG,
 				flagTintB,
@@ -164,13 +179,10 @@ public final class ArenaFighterOverheadRenderer {
 	}
 
 	/**
-	 * Textured flag quad with normalized UVs.
-	 * Local Y grows downward after scale(-s,-s,s); top of flag is -halfH.
-	 * U is flipped vs texture file so hoist (left in PNG) stays on the viewer's left
-	 * after the billboard {@code scale(-s,-s,s)} mirror — same visual as base markers.
+	 * Front face — same UVs as {@code ArenaBaseMarkerRenderer.blitTexturedQuad}.
 	 */
-	private static void blitFlagQuad(
-			PoseStack poseStack,
+	private static void blitFlagQuadFront(
+			PoseStack.Pose pose,
 			VertexConsumer consumer,
 			float left,
 			float top,
@@ -182,11 +194,33 @@ public final class ArenaFighterOverheadRenderer {
 			int b,
 			int light,
 			int overlay) {
-		PoseStack.Pose pose = poseStack.last();
-		vertex(consumer, pose, left, bottom, z, 1.0F, 1.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, left, bottom, z, 0.0F, 1.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, right, bottom, z, 1.0F, 1.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, right, top, z, 1.0F, 0.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, left, top, z, 0.0F, 0.0F, r, g, b, 255, light, overlay);
+	}
+
+	/**
+	 * Back face — same UVs as {@code ArenaBaseMarkerRenderer.blitTexturedQuadBack}.
+	 * This is the face that reads correctly after billboard {@code scale(-s,-s,s)}.
+	 */
+	private static void blitFlagQuadBack(
+			PoseStack.Pose pose,
+			VertexConsumer consumer,
+			float left,
+			float top,
+			float right,
+			float bottom,
+			float z,
+			int r,
+			int g,
+			int b,
+			int light,
+			int overlay) {
 		vertex(consumer, pose, right, bottom, z, 0.0F, 1.0F, r, g, b, 255, light, overlay);
-		vertex(consumer, pose, right, top, z, 0.0F, 0.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, left, bottom, z, 1.0F, 1.0F, r, g, b, 255, light, overlay);
 		vertex(consumer, pose, left, top, z, 1.0F, 0.0F, r, g, b, 255, light, overlay);
+		vertex(consumer, pose, right, top, z, 0.0F, 0.0F, r, g, b, 255, light, overlay);
 	}
 
 	/**

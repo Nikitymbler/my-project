@@ -515,7 +515,7 @@ Entity type: `arena_of_nations:arena_fighter` (`ArenaFighterEntity extends Wolf`
 
 ~15–20 последних этапов по коду. Без простыней Java.
 
-90. **Fighter flag mirror + US stars (31.07)** — флаги бойцов: U-flip в `ArenaFighterOverheadRenderer.blitFlagQuad` (компенсация `scale(-s,-s,s)`); базы не трогались. США: `us.svg` со звёздами как `<polygon>` (старый `marker-mid` не растеризовался) → PNG fighter/HD/tiktok. Тест `ArenaUsFlagAndFighterUvTest`. Нужен рестарт клиента / F3+T.
+90. **Fighter flag mirror + US stars (31.07/01.08)** — бойцы: тот же two-sided UV path, что у баз (`blitFlagQuadFront`/`Back`); текстуры бойцов → `flags_hd` (как базы). США: SVG polygon-звёзды + PNG. Скрипт `APPLY_FLAG_FIX.cmd` (hard reset+build). Нужен полный рестарт клиента + F3+T.
 
 89. **S2E gift HTTP 400 fix (31.07)** — Play/BOM/`{coins}`; permissive defaults; CORS; `last HTTP body=`; `TEST_S2E_NOW.cmd`. Успешный ответ gift/chat: **HTTP 200** (+ `ok`/`success`) вместо 202 — StreamToEarn больше не показывает ложный fail toast. Нужен pull+build+рестарт мира. Chat Play (`message":"ru"`) до Gift, иначе `country_not_selected`.
 
